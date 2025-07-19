@@ -1,0 +1,287 @@
+use std::{
+    net::SocketAddr,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+
+use anyhow::{anyhow, bail};
+use arc_swap::ArcSwap;
+use qunet::{
+    message::MsgData,
+    server::{
+        Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
+        app_handler::{AppHandler, AppResult},
+        client::ClientState,
+    },
+};
+use server_shared::{
+    data::GameServerData,
+    encoding::EncodeMessageError,
+    token_issuer::{TokenData, TokenIssuer},
+};
+use thiserror::Error;
+use tracing::{debug, error, info, warn};
+
+use crate::{bridge::Bridge, client_data::ClientData, config::Config, data};
+
+pub struct ConnectionHandler {
+    // we use a weak handle here to avoid ref cycles, which will make it impossible to drop the server
+    server: OnceLock<WeakServerHandle<Self>>,
+    data: GameServerData,
+    bridge: Bridge,
+    token_issuer: ArcSwap<Option<TokenIssuer>>,
+}
+
+pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
+
+#[derive(Debug, Error)]
+pub enum HandlerError {
+    #[error("failed to encode message: {0}")]
+    Encoder(#[from] EncodeMessageError),
+    #[error("cannot handle this message while unauthorized")]
+    Unauthorized,
+}
+
+type HandlerResult<T> = Result<T, HandlerError>;
+
+impl AppHandler for ConnectionHandler {
+    type ClientData = ClientData;
+
+    async fn on_launch(&self, server: QunetServerHandle<Self>) -> AppResult<()> {
+        let _ = self.server.set(server.make_weak());
+        self.bridge.set_server(server.make_weak());
+
+        // connect to the central server
+        if let Err(e) = self.bridge.connect() {
+            return Err(format!("failed to connect to the central server: {e}").into());
+        }
+
+        info!("Globed game server is running!");
+        info!(
+            "- Server name: {} ({}), region: {})",
+            self.data.name, self.data.string_id, self.data.region
+        );
+        info!("- Accepting connections on: {}", self.data.address);
+        info!("- Central server: {}", self.bridge.server_url());
+
+        let status_intv = if cfg!(debug_assertions) {
+            Duration::from_mins(15)
+        } else {
+            Duration::from_mins(60)
+        };
+
+        server
+            .schedule(status_intv, |server| async move {
+                server.print_server_status();
+                // TODO: shrink server buffer pool here to reclaim memory?
+            })
+            .await;
+
+        // schedule a task to try and recover the bridge connection
+        server
+            .schedule(Duration::from_secs(60), |server| async move {
+                let br = &server.handler().bridge;
+
+                if !br.is_connected() && !br.is_connecting() {
+                    info!("attempting to reconnect to the central server...");
+                    if let Err(e) = br.connect() {
+                        error!("failed to reconnect to the central server: {e}");
+                    }
+                }
+            })
+            .await;
+
+        Ok(())
+    }
+
+    async fn on_client_connect(
+        &self,
+        _server: &QunetServer<Self>,
+        connection_id: u64,
+        address: SocketAddr,
+        kind: &str,
+    ) -> AppResult<Self::ClientData> {
+        if self.server.get().is_none() {
+            return Err("server not initialized yet".into());
+        }
+
+        info!(
+            "Client connected: connection_id={}, address={}, kind={}",
+            connection_id, address, kind
+        );
+
+        Ok(ClientData::default())
+    }
+
+    async fn on_client_data(
+        &self,
+        _server: &QunetServer<Self>,
+        client: &ClientStateHandle,
+        data: MsgData<'_>,
+    ) {
+        let result = data::decode_message_match!(self, data, {
+            LoginUToken(msg) => {
+                let account_id = msg.get_account_id();
+                let token = msg.get_token()?.to_str()?;
+
+                self.handle_login_attempt(client, account_id, token).await.map(|_| ())
+            },
+
+            LoginUTokenAndJoin(msg) => {
+                let account_id = msg.get_account_id();
+                let token = msg.get_token()?.to_str()?;
+                let session_id = msg.get_session_id();
+                let passcode = msg.get_passcode();
+
+                try {
+                    if self.handle_login_attempt(client, account_id, token).await? {
+                        self.handle_join_session(client, session_id, passcode).await?;
+                    }
+                }
+            },
+
+            JoinSession(msg) => {
+                let session_id = msg.get_session_id();
+                let passcode = msg.get_passcode();
+
+                self.handle_join_session(client, session_id, passcode).await
+            },
+
+            LeaveSession(msg) => {
+                self.handle_leave_session(client).await
+            },
+        });
+
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                warn!("[{}] handler error: {}", client.address, e);
+            }
+
+            Err(e) => {
+                warn!("[{}] failed to decode message: {}", client.address, e);
+            }
+        }
+    }
+}
+
+impl ConnectionHandler {
+    pub async fn new(config: &Config, data: GameServerData) -> Self {
+        let bridge = match Bridge::new(config).await {
+            Ok(x) => x,
+            Err(e) => {
+                error!("failed to create a qunet client for the bridge: {e}");
+                std::process::exit(1);
+            }
+        };
+
+        Self {
+            server: OnceLock::new(),
+            data,
+            bridge,
+            token_issuer: ArcSwap::new(Arc::new(None)),
+        }
+    }
+
+    /// Obtain a reference to the server. This must not be called before the server is launched and `on_launch` is called.
+    fn server(&self) -> QunetServerHandle<Self> {
+        self.server
+            .get()
+            .expect("Server not initialized yet")
+            .upgrade()
+            .expect("Server has shut down")
+    }
+
+    // Apis for bridge
+
+    pub fn init_token_issuer(&self, key: &str) -> anyhow::Result<()> {
+        let issuer = match TokenIssuer::new(key) {
+            Ok(x) => x,
+            Err(e) => {
+                bail!("failed to create token issuer: {}", e);
+            }
+        };
+
+        self.token_issuer.store(Arc::new(Some(issuer)));
+        debug!("Token issuer initialized");
+
+        Ok(())
+    }
+
+    pub fn destroy_token_issuer(&self) {
+        self.token_issuer.store(Arc::new(None));
+        debug!("Token issuer destroyed");
+    }
+
+    // Client api
+
+    async fn handle_login_attempt(
+        &self,
+        client: &ClientStateHandle,
+        account_id: i32,
+        token: &str,
+    ) -> HandlerResult<bool> {
+        // check if already authorized
+        if client.authorized() {
+            return Ok(true);
+        }
+
+        let issuer = self.token_issuer.load();
+
+        if let Some(issuer) = issuer.as_ref() {
+            let token_data = match issuer.validate_match(token, account_id) {
+                Ok(d) => d,
+                Err(_) => {
+                    self.on_login_failed(client, data::LoginFailedReason::InvalidUserToken).await?;
+                    return Ok(false);
+                }
+            };
+
+            self.on_login_success(client, token_data).await?;
+
+            Ok(true)
+        } else {
+            self.on_login_failed(client, data::LoginFailedReason::CentralServerUnreachable).await?;
+            Ok(false)
+        }
+    }
+
+    async fn on_login_success(
+        &self,
+        client: &ClientStateHandle,
+        token_data: TokenData,
+    ) -> HandlerResult<()> {
+        client.set_account_data(token_data);
+        Ok(())
+    }
+
+    #[inline]
+    async fn on_login_failed(
+        &self,
+        client: &ClientState<Self>,
+        reason: data::LoginFailedReason,
+    ) -> HandlerResult<()> {
+        let buf = data::encode_message!(self, 128, msg => {
+            let mut login_failed = msg.reborrow().init_login_failed();
+            login_failed.set_reason(reason);
+        })?;
+
+        client.send_data_bufkind(buf);
+        Ok(())
+    }
+
+    async fn handle_join_session(
+        &self,
+        client: &ClientStateHandle,
+        session_id: u64,
+        passcode: u32,
+    ) -> HandlerResult<()> {
+        // TODO
+        Ok(())
+    }
+
+    async fn handle_leave_session(&self, client: &ClientStateHandle) -> HandlerResult<()> {
+        // TODO
+        Ok(())
+    }
+}

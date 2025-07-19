@@ -1,0 +1,30 @@
+[package]
+name = "game-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+capnp = { version = "0.21.2", default-features = false, features = [
+    "unaligned",
+    "std",
+] }
+heapless = "0.8.0"
+parking_lot = "0.12.4"
+qunet = { path = "../qunet/qunet", features = ["client"] }
+rand = "0.9.1"
+server-shared = { path = "../server-shared", features = ["game", "srvc"] }
+serde = { version = "1.0.219", features = ["derive"] }
+thiserror = "2.0.12"
+tokio = { version = "1.45.1", features = ["full"] }
+toml = "0.9.2"
+tracing = "0.1.41"
+tracing-appender = { version = "0.2.3", features = ["parking_lot"] }
+tracing-subscriber = "0.3.19"
+anyhow = "1.0.98"
+arc-swap = "1.7.1"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.5"
+
+[build-dependencies]
+capnpc = "0.21.1"
