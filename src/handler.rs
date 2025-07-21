@@ -6,6 +6,8 @@ use std::{
 
 use anyhow::{anyhow, bail};
 use arc_swap::ArcSwap;
+use const_default::ConstDefault;
+use parking_lot::RwLockWriteGuard;
 use qunet::{
     message::MsgData,
     server::{
@@ -19,10 +21,18 @@ use server_shared::{
     encoding::EncodeMessageError,
     token_issuer::{TokenData, TokenIssuer},
 };
+use smallvec::SmallVec;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-use crate::{bridge::Bridge, client_data::ClientData, config::Config, data};
+use crate::{
+    bridge::Bridge,
+    client_data::ClientData,
+    config::Config,
+    data,
+    player_state::{PlayerDataKind, PlayerObjectData, PlayerState},
+    session_manager::{GameSession, SessionManager},
+};
 
 pub struct ConnectionHandler {
     // we use a weak handle here to avoid ref cycles, which will make it impossible to drop the server
@@ -30,6 +40,7 @@ pub struct ConnectionHandler {
     data: GameServerData,
     bridge: Bridge,
     token_issuer: ArcSwap<Option<TokenIssuer>>,
+    session_manager: SessionManager,
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
@@ -40,6 +51,8 @@ pub enum HandlerError {
     Encoder(#[from] EncodeMessageError),
     #[error("cannot handle this message while unauthorized")]
     Unauthorized,
+    #[error("spoofed account ID inside player data message")]
+    SpoofedAccountId,
 }
 
 type HandlerResult<T> = Result<T, HandlerError>;
@@ -113,6 +126,16 @@ impl AppHandler for ConnectionHandler {
         Ok(ClientData::default())
     }
 
+    async fn on_client_disconnect(
+        &self,
+        _server: &QunetServer<Self>,
+        client: &Arc<ClientState<Self>>,
+    ) {
+        if let Some(session) = client.take_session() {
+            self.remove_from_session(client, &session);
+        }
+    }
+
     async fn on_client_data(
         &self,
         _server: &QunetServer<Self>,
@@ -147,9 +170,17 @@ impl AppHandler for ConnectionHandler {
                 self.handle_join_session(client, session_id, passcode).await
             },
 
-            LeaveSession(msg) => {
+            LeaveSession(_msg) => {
                 self.handle_leave_session(client).await
             },
+
+            PlayerData(msg) => {
+                // Convert the capnp data struct to a native one
+                let data = msg.get_data()?;
+                let data = PlayerState::from_reader(data)?;
+
+                self.handle_player_data(client, data).await
+            }
         });
 
         match result {
@@ -180,6 +211,7 @@ impl ConnectionHandler {
             data,
             bridge,
             token_issuer: ArcSwap::new(Arc::new(None)),
+            session_manager: SessionManager::new(),
         }
     }
 
@@ -276,12 +308,120 @@ impl ConnectionHandler {
         session_id: u64,
         passcode: u32,
     ) -> HandlerResult<()> {
-        // TODO
+        must_auth(client)?;
+
+        let new_session = match self.session_manager.get_or_create_session(session_id, passcode) {
+            Ok(s) => s,
+            Err(_) => {
+                let buf = data::encode_message!(self, 128, msg => {
+                    let mut join_failed = msg.reborrow().init_join_session_failed();
+                    join_failed.set_reason(data::JoinSessionFailedReason::InvalidPasscode);
+                })?;
+
+                client.send_data_bufkind(buf);
+                return Ok(());
+            }
+        };
+
+        if let Some(old_session) = client.set_session(new_session.clone()) {
+            self.remove_from_session(client, &old_session);
+        }
+
+        new_session.add_player(client.account_id());
+
         Ok(())
     }
 
     async fn handle_leave_session(&self, client: &ClientStateHandle) -> HandlerResult<()> {
-        // TODO
+        must_auth(client)?;
+
+        if let Some(session) = client.take_session() {
+            self.remove_from_session(client, &session);
+        }
+
         Ok(())
+    }
+
+    fn remove_from_session(&self, client: &ClientStateHandle, session: &GameSession) {
+        session.remove_player(client.account_id());
+        self.session_manager.delete_session_if_empty(session.id());
+    }
+
+    async fn handle_player_data(
+        &self,
+        client: &ClientStateHandle,
+        data: PlayerState,
+    ) -> HandlerResult<()> {
+        must_auth(client)?;
+
+        let account_id = data.account_id;
+
+        if account_id != client.account_id() {
+            return Err(HandlerError::SpoofedAccountId);
+        }
+
+        let Some(session) = client.session() else {
+            debug!("[{}] tried to send player data while not in a session", client.address);
+            return Ok(());
+        };
+
+        let mut nearby_ids = SmallVec::<[i32; 64]>::new();
+
+        // Lock the session to update the player data and discover the amount of players nearby
+        {
+            let mut players = session.players_write_lock();
+            players.insert(account_id, data.clone());
+
+            // TODO: not sure if the downgrade is worth it
+            let players = RwLockWriteGuard::downgrade(players);
+
+            for (id, _player) in players.iter() {
+                if *id == account_id {
+                    continue;
+                }
+
+                // TODO: when moderation stuff is added, allow players to hide themselves
+                // probably don't hide in platformer, re-enable this when more stuff is implemented
+
+                // let should_send = data.is_near(player);
+                let should_send = true;
+
+                if should_send {
+                    nearby_ids.push(*id);
+                }
+            }
+        }
+
+        // TODO: adjust this
+        const BYTES_PER_PLAYER: usize = 80;
+        const DEFAULT_PLAYER_DATA: &PlayerState = &PlayerState::DEFAULT;
+
+        let buf = data::encode_message_heap!(self, nearby_ids.len() * BYTES_PER_PLAYER, msg => {
+            let players = session.players_read_lock();
+
+            let mut level_data = msg.reborrow().init_level_data();
+            let mut players_data = level_data.reborrow().init_players(nearby_ids.len() as u32);
+
+            for (i, id) in nearby_ids.iter().enumerate() {
+                let mut p = players_data.reborrow().get(i as u32);
+
+                // we do this small hack because there's a chance that player has left since the initial check,
+                // it's completely fine to just send default data in that case
+                let player = players.get(id).unwrap_or(DEFAULT_PLAYER_DATA);
+                player.encode(p.reborrow());
+            }
+        })?;
+
+        client.send_unreliable_data_bufkind(buf);
+
+        Ok(())
+    }
+}
+
+fn must_auth(client: &ClientState<ConnectionHandler>) -> HandlerResult<()> {
+    if client.data().authorized() {
+        Ok(())
+    } else {
+        Err(HandlerError::Unauthorized)
     }
 }

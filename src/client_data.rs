@@ -1,11 +1,18 @@
-use std::sync::{OnceLock, atomic::AtomicU64};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 
+use parking_lot::Mutex;
 use server_shared::token_issuer::TokenData;
+
+use crate::session_manager::GameSession;
 
 #[derive(Default)]
 pub struct ClientData {
     account_data: OnceLock<TokenData>,
     session_id: AtomicU64,
+    session: Mutex<Option<Arc<GameSession>>>,
 }
 
 impl ClientData {
@@ -34,5 +41,27 @@ impl ClientData {
     /// Returns the username if the client is authorized, otherwise returns an empty string.
     pub fn username(&self) -> &str {
         self.account_data().map_or("", |x| x.username.as_str())
+    }
+
+    pub fn session_id(&self) -> u64 {
+        self.session_id.load(Ordering::Relaxed)
+    }
+
+    /// Sets the session for this client, returning the previous session if it existed.
+    pub fn set_session(&self, session: Arc<GameSession>) -> Option<Arc<GameSession>> {
+        self.session_id.store(session.id(), Ordering::Relaxed);
+        let mut old = self.session.lock();
+        old.replace(session)
+    }
+
+    /// Clears the session for this client, returning the previous session if it existed.
+    pub fn take_session(&self) -> Option<Arc<GameSession>> {
+        self.session_id.store(0, Ordering::Relaxed);
+        let mut old = self.session.lock();
+        old.take()
+    }
+
+    pub fn session(&self) -> Option<Arc<GameSession>> {
+        self.session.lock().clone()
     }
 }

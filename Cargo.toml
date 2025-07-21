@@ -9,7 +9,7 @@ capnp = { version = "0.21.2", default-features = false, features = [
     "std",
 ] }
 heapless = "0.8.0"
-parking_lot = "0.12.4"
+parking_lot = { version = "0.12.4", features = ["hardware-lock-elision", "send_guard"] }
 qunet = { path = "../qunet/qunet", features = ["client"] }
 rand = "0.9.1"
 server-shared = { path = "../server-shared", features = ["game", "srvc"] }
@@ -22,6 +22,10 @@ tracing-appender = { version = "0.2.3", features = ["parking_lot"] }
 tracing-subscriber = "0.3.19"
 anyhow = "1.0.98"
 arc-swap = "1.7.1"
+dashmap = { version = "6.1.0", features = ["inline"] }
+rustc-hash = "2.1.1"
+smallvec = "1.15.1"
+const-default = { version = "1.0.0", features = ["derive"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5"

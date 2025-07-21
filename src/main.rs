@@ -24,6 +24,8 @@ pub mod client_data;
 pub mod config;
 pub mod data;
 pub mod handler;
+pub mod player_state;
+pub mod session_manager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
