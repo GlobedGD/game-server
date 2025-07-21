@@ -26,8 +26,16 @@ impl EventHandler for BridgeHandler {
 
         // authenticate
         let buf = data::encode_message_unsafe!(self, 512, msg => {
+            let main_server = self.server();
+            let data = main_server.handler().server_data();
+
             let mut login_srv = msg.reborrow().init_login_srv();
             login_srv.set_password(&self.password);
+            let mut srv_data = login_srv.init_data();
+            srv_data.set_name(&data.name);
+            srv_data.set_string_id(&data.string_id);
+            srv_data.set_region(&data.region);
+            srv_data.set_address(&data.address);
         });
 
         let buf = match buf {

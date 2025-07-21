@@ -71,7 +71,7 @@ impl AppHandler for ConnectionHandler {
 
         info!("Globed game server is running!");
         info!(
-            "- Server name: {} ({}), region: {})",
+            "- Server name: {} ({}), region: {}",
             self.data.name, self.data.string_id, self.data.region
         );
         info!("- Accepting connections on: {}", self.data.address);
@@ -86,7 +86,7 @@ impl AppHandler for ConnectionHandler {
         server
             .schedule(status_intv, |server| async move {
                 server.print_server_status();
-                // TODO: shrink server buffer pool here to reclaim memory?
+                // TODO (low): shrink server buffer pool here to reclaim memory?
             })
             .await;
 
@@ -224,6 +224,10 @@ impl ConnectionHandler {
             .expect("Server has shut down")
     }
 
+    pub fn server_data(&self) -> &GameServerData {
+        &self.data
+    }
+
     // Apis for bridge
 
     pub fn init_token_issuer(&self, key: &str) -> anyhow::Result<()> {
@@ -310,6 +314,11 @@ impl ConnectionHandler {
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
+        debug!(
+            "[{}] attempting to join session {} with passcode {}",
+            client.address, session_id, passcode
+        );
+
         let new_session = match self.session_manager.get_or_create_session(session_id, passcode) {
             Ok(s) => s,
             Err(_) => {
@@ -334,6 +343,8 @@ impl ConnectionHandler {
 
     async fn handle_leave_session(&self, client: &ClientStateHandle) -> HandlerResult<()> {
         must_auth(client)?;
+
+        debug!("[{}] leaving session", client.address);
 
         if let Some(session) = client.take_session() {
             self.remove_from_session(client, &session);
@@ -372,7 +383,7 @@ impl ConnectionHandler {
             let mut players = session.players_write_lock();
             players.insert(account_id, data.clone());
 
-            // TODO: not sure if the downgrade is worth it
+            // TODO (low): not sure if the downgrade is worth it
             let players = RwLockWriteGuard::downgrade(players);
 
             for (id, _player) in players.iter() {
@@ -380,7 +391,7 @@ impl ConnectionHandler {
                     continue;
                 }
 
-                // TODO: when moderation stuff is added, allow players to hide themselves
+                // TODO (medium): when moderation stuff is added, allow players to hide themselves
                 // probably don't hide in platformer, re-enable this when more stuff is implemented
 
                 // let should_send = data.is_near(player);
@@ -392,7 +403,7 @@ impl ConnectionHandler {
             }
         }
 
-        // TODO: adjust this
+        // TODO (high): adjust this
         const BYTES_PER_PLAYER: usize = 80;
         const DEFAULT_PLAYER_DATA: &PlayerState = &PlayerState::DEFAULT;
 

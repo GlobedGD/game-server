@@ -22,7 +22,7 @@ impl SessionManager {
         session_id: u64,
         passcode: u32,
     ) -> Result<Arc<GameSession>, IncorrectPasscode> {
-        // TODO: validate passcode
+        // TODO (medium): validate passcode
         let _ = passcode;
 
         let session = self

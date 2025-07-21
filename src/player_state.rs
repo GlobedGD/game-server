@@ -138,7 +138,7 @@ pub enum PlayerDataKind {
     Single {
         player: PlayerObjectData,
     },
-    // TODO: more complete data for spectating
+    // TODO (very low): more complete data for spectating
 }
 
 impl Default for PlayerDataKind {
@@ -235,7 +235,7 @@ impl PlayerState {
 
     /// Determines if another player is "near" this one, aka this player can see the other player.
     pub fn is_near(&self, _other: &Self) -> bool {
-        // TODO
+        // TODO (low)
         true
     }
 }
