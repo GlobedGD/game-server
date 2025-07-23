@@ -162,6 +162,7 @@ pub struct PlayerState {
     pub timestamp: f32,
     pub frame_number: u8,
     pub death_count: u8,
+    pub percentage: u16,
     pub is_dead: bool,
     pub is_paused: bool,
     pub is_practicing: bool,
@@ -198,6 +199,7 @@ impl PlayerState {
             timestamp: reader.get_timestamp(),
             frame_number: reader.get_frame_number(),
             death_count: reader.get_death_count(),
+            percentage: reader.get_percentage(),
             is_dead: reader.get_is_dead(),
             is_paused: reader.get_is_paused(),
             is_practicing: reader.get_is_practicing(),
@@ -213,6 +215,7 @@ impl PlayerState {
         builder.set_timestamp(self.timestamp);
         builder.set_frame_number(self.frame_number);
         builder.set_death_count(self.death_count);
+        builder.set_percentage(self.percentage);
         builder.set_is_dead(self.is_dead);
         builder.set_is_paused(self.is_paused);
         builder.set_is_practicing(self.is_practicing);

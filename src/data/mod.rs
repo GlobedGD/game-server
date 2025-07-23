@@ -1,8 +1,8 @@
 pub use server_shared::{encoding::*, schema::game::*};
 
 macro_rules! decode_message_match {
-    ($this:expr, $data:expr, {$($variant:ident($msg_var:ident) => {  $($t:tt)* }),* $(,)?}) => {
-        server_shared::decode_message_match!(server_shared::schema::game, $this.server(), $data, {$($variant($msg_var) => {  $($t)* }),*})
+    ($this:expr, $data:expr, $unpacked_data:ident, {$($variant:ident($msg_var:ident) => {  $($t:tt)* }),* $(,)?}) => {
+        server_shared::decode_message_match!(server_shared::schema::game, $this.server(), $data, $unpacked_data, {$($variant($msg_var) => {  $($t)* }),*})
     };
 }
 

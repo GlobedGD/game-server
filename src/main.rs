@@ -1,7 +1,7 @@
 #![feature(try_blocks, duration_constructors_lite)]
 #![allow(clippy::new_without_default)]
 
-use std::net::IpAddr;
+use std::{net::IpAddr, time::Duration};
 
 use qunet::server::{
     ServerOutcome,

@@ -1,12 +1,14 @@
 use std::{
+    borrow::Cow,
     net::SocketAddr,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, Weak},
     time::Duration,
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::bail;
 use arc_swap::ArcSwap;
 use const_default::ConstDefault;
+use dashmap::DashMap;
 use parking_lot::RwLockWriteGuard;
 use qunet::{
     message::MsgData,
@@ -30,7 +32,7 @@ use crate::{
     client_data::ClientData,
     config::Config,
     data,
-    player_state::{PlayerDataKind, PlayerObjectData, PlayerState},
+    player_state::PlayerState,
     session_manager::{GameSession, SessionManager},
 };
 
@@ -41,9 +43,12 @@ pub struct ConnectionHandler {
     bridge: Bridge,
     token_issuer: ArcSwap<Option<TokenIssuer>>,
     session_manager: SessionManager,
+
+    all_clients: DashMap<i32, WeakClientStateHandle>,
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
+pub type WeakClientStateHandle = Weak<ClientState<ConnectionHandler>>;
 
 #[derive(Debug, Error)]
 pub enum HandlerError {
@@ -131,8 +136,15 @@ impl AppHandler for ConnectionHandler {
         _server: &QunetServer<Self>,
         client: &Arc<ClientState<Self>>,
     ) {
+        debug!("Client disconnected: {} ({})", client.address, client.account_id());
+
         if let Some(session) = client.take_session() {
             self.remove_from_session(client, &session);
+        }
+
+        let account_id = client.account_id();
+        if account_id != 0 {
+            self.all_clients.remove(&account_id);
         }
     }
 
@@ -142,7 +154,7 @@ impl AppHandler for ConnectionHandler {
         client: &ClientStateHandle,
         data: MsgData<'_>,
     ) {
-        let result = data::decode_message_match!(self, data, {
+        let result = data::decode_message_match!(self, data, unpacked_data, {
             LoginUToken(msg) => {
                 let account_id = msg.get_account_id();
                 let token = msg.get_token()?.to_str()?;
@@ -158,6 +170,7 @@ impl AppHandler for ConnectionHandler {
 
                 try {
                     if self.handle_login_attempt(client, account_id, token).await? {
+                        unpacked_data.reset(); // free up memory
                         self.handle_join_session(client, session_id, passcode).await?;
                     }
                 }
@@ -167,10 +180,12 @@ impl AppHandler for ConnectionHandler {
                 let session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
 
+                unpacked_data.reset(); // free up memory
                 self.handle_join_session(client, session_id, passcode).await
             },
 
             LeaveSession(_msg) => {
+                unpacked_data.reset(); // free up memory
                 self.handle_leave_session(client).await
             },
 
@@ -178,6 +193,7 @@ impl AppHandler for ConnectionHandler {
                 // Convert the capnp data struct to a native one
                 let data = msg.get_data()?;
                 let data = PlayerState::from_reader(data)?;
+                unpacked_data.reset(); // free up memory
 
                 self.handle_player_data(client, data).await
             }
@@ -212,6 +228,7 @@ impl ConnectionHandler {
             bridge,
             token_issuer: ArcSwap::new(Arc::new(None)),
             session_manager: SessionManager::new(),
+            all_clients: DashMap::new(),
         }
     }
 
@@ -287,7 +304,19 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         token_data: TokenData,
     ) -> HandlerResult<()> {
+        info!("[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id);
+
+        if let Some(old_client) =
+            self.all_clients.insert(token_data.account_id, Arc::downgrade(client))
+        {
+            // there already was a client with this account ID, disconnect them
+            if let Some(old_client) = old_client.upgrade() {
+                old_client.disconnect(Cow::Borrowed("Duplicate login detected, the same account logged in from a different location"));
+            }
+        }
+
         client.set_account_data(token_data);
+
         Ok(())
     }
 
@@ -376,7 +405,8 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        let mut nearby_ids = SmallVec::<[i32; 64]>::new();
+        let mut nearby_ids = SmallVec::<[i32; 256]>::new();
+        let mut culled_ids = SmallVec::<[i32; 256]>::new();
 
         // Lock the session to update the player data and discover the amount of players nearby
         {
@@ -387,6 +417,8 @@ impl ConnectionHandler {
             let players = RwLockWriteGuard::downgrade(players);
 
             for (id, _player) in players.iter() {
+                // in debug, always send the local player, helps with debugging
+                // #[cfg(not(debug_assertions))]
                 if *id == account_id {
                     continue;
                 }
@@ -399,15 +431,21 @@ impl ConnectionHandler {
 
                 if should_send {
                     nearby_ids.push(*id);
+                } else {
+                    culled_ids.push(*id);
                 }
             }
         }
 
         // TODO (high): adjust this
-        const BYTES_PER_PLAYER: usize = 80;
+        const BYTES_PER_PLAYER: usize = 64;
+        const BYTES_PER_CULLED: usize = 4;
         const DEFAULT_PLAYER_DATA: &PlayerState = &PlayerState::DEFAULT;
 
-        let buf = data::encode_message_heap!(self, nearby_ids.len() * BYTES_PER_PLAYER, msg => {
+        let to_allocate =
+            56 + nearby_ids.len() * BYTES_PER_PLAYER + culled_ids.len() * BYTES_PER_CULLED;
+
+        let buf = data::encode_message_heap!(self, to_allocate, msg => {
             let players = session.players_read_lock();
 
             let mut level_data = msg.reborrow().init_level_data();
@@ -420,6 +458,12 @@ impl ConnectionHandler {
                 // it's completely fine to just send default data in that case
                 let player = players.get(id).unwrap_or(DEFAULT_PLAYER_DATA);
                 player.encode(p.reborrow());
+            }
+
+            let mut culled_data = level_data.reborrow().init_culled(culled_ids.len() as u32);
+
+            for (i, id) in culled_ids.iter().enumerate() {
+                culled_data.reborrow().set(i as u32, *id);
             }
         })?;
 
