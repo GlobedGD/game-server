@@ -1,13 +1,17 @@
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    pin::Pin,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use crate::handler::ConnectionHandler;
 
 use super::data;
 use qunet::{
-    client::{Client, ClientHandle, EventHandler},
+    client::{Client, ClientHandle, ConnectionError, EventHandler},
     message::MsgData,
     server::{ServerHandle as QunetServerHandle, WeakServerHandle},
 };
@@ -18,11 +22,14 @@ pub struct BridgeHandler {
     password: String,
     authenticated: AtomicBool,
     server_handle: OnceLock<WeakServerHandle<ConnectionHandler>>,
+    reconnect_attempt: AtomicUsize,
 }
 
 impl EventHandler for BridgeHandler {
     async fn on_connected(&self, client: &ClientHandle<Self>) {
         info!("Connected to the central server, logging in");
+
+        self.reconnect_attempt.store(0, Ordering::Relaxed);
 
         // authenticate
         let buf = data::encode_message_unsafe!(self, 512, msg => {
@@ -56,8 +63,12 @@ impl EventHandler for BridgeHandler {
         warn!("Disconnected from the central server, attempting to reconnect...");
 
         if let Err(e) = client.clone().connect(&self.server_url) {
-            error!("Failed to reconnect: {e}");
+            self.on_connection_error_helper(client, e).await;
         }
+    }
+
+    async fn on_connection_error(&self, client: &ClientHandle<Self>, err: ConnectionError) {
+        self.on_connection_error_helper(client, err).await;
     }
 
     async fn on_recv_data(&self, client: &Client<Self>, data: MsgData<'_>) {
@@ -94,6 +105,7 @@ impl BridgeHandler {
             password,
             authenticated: AtomicBool::new(false),
             server_handle: OnceLock::new(),
+            reconnect_attempt: AtomicUsize::new(0),
         }
     }
 
@@ -131,5 +143,27 @@ impl BridgeHandler {
 
     fn set_authenticated(&self, authenticated: bool) {
         self.authenticated.store(authenticated, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    fn on_connection_error_helper<'a>(
+        &'a self,
+        client: &'a ClientHandle<Self>,
+        err: ConnectionError,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            let attempt_count = self.reconnect_attempt.fetch_add(1, Ordering::Relaxed) + 1;
+            let wait_time = Duration::from_secs(2u64.pow(attempt_count.clamp(1, 6) as u32));
+
+            error!(
+                "Connection to central server failed, waiting {wait_time:?} and retrying: {err}"
+            );
+
+            tokio::time::sleep(wait_time).await;
+
+            if let Err(e) = client.clone().connect(&self.server_url) {
+                self.on_connection_error_helper(client, e).await;
+            }
+        })
     }
 }

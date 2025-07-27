@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use parking_lot::Mutex;
-use server_shared::token_issuer::TokenData;
+use server_shared::{data::PlayerIconData, token_issuer::TokenData};
 
 use crate::session_manager::GameSession;
 
@@ -13,6 +13,7 @@ pub struct ClientData {
     account_data: OnceLock<TokenData>,
     session_id: AtomicU64,
     session: Mutex<Option<Arc<GameSession>>>,
+    icons: Mutex<PlayerIconData>,
 }
 
 impl ClientData {
@@ -63,5 +64,14 @@ impl ClientData {
 
     pub fn session(&self) -> Option<Arc<GameSession>> {
         self.session.lock().clone()
+    }
+
+    pub fn set_icons(&self, icons: PlayerIconData) {
+        let mut lock = self.icons.lock();
+        *lock = icons;
+    }
+
+    pub fn icons(&self) -> PlayerIconData {
+        *self.icons.lock()
     }
 }

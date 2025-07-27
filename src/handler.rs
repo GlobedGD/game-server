@@ -19,21 +19,22 @@ use qunet::{
     },
 };
 use server_shared::{
-    data::GameServerData,
+    data::{GameServerData, PlayerIconData},
     encoding::EncodeMessageError,
     token_issuer::{TokenData, TokenIssuer},
 };
 use smallvec::SmallVec;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     bridge::Bridge,
     client_data::ClientData,
     config::Config,
     data,
+    event::{CounterChangeEvent, CounterChangeType, Event},
     player_state::PlayerState,
-    session_manager::{GameSession, SessionManager},
+    session_manager::{GamePlayerState, GameSession, SessionManager},
 };
 
 pub struct ConnectionHandler {
@@ -95,20 +96,6 @@ impl AppHandler for ConnectionHandler {
             })
             .await;
 
-        // schedule a task to try and recover the bridge connection
-        server
-            .schedule(Duration::from_secs(60), |server| async move {
-                let br = &server.handler().bridge;
-
-                if !br.is_connected() && !br.is_connecting() {
-                    info!("attempting to reconnect to the central server...");
-                    if let Err(e) = br.connect() {
-                        error!("failed to reconnect to the central server: {e}");
-                    }
-                }
-            })
-            .await;
-
         Ok(())
     }
 
@@ -158,18 +145,20 @@ impl AppHandler for ConnectionHandler {
             LoginUToken(msg) => {
                 let account_id = msg.get_account_id();
                 let token = msg.get_token()?.to_str()?;
+                let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
 
-                self.handle_login_attempt(client, account_id, token).await.map(|_| ())
+                self.handle_login_attempt(client, account_id, token, icons).await.map(|_| ())
             },
 
             LoginUTokenAndJoin(msg) => {
                 let account_id = msg.get_account_id();
                 let token = msg.get_token()?.to_str()?;
+                let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
                 let session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
 
                 try {
-                    if self.handle_login_attempt(client, account_id, token).await? {
+                    if self.handle_login_attempt(client, account_id, token, icons).await? {
                         unpacked_data.reset(); // free up memory
                         self.handle_join_session(client, session_id, passcode).await?;
                     }
@@ -193,10 +182,41 @@ impl AppHandler for ConnectionHandler {
                 // Convert the capnp data struct to a native one
                 let data = msg.get_data()?;
                 let data = PlayerState::from_reader(data)?;
+
+                let mut data_requests = [0; 64];
+                let reqs = {
+                    let in_reqs = msg.get_data_requests()?;
+                    for (i, val) in in_reqs.iter().take(64).enumerate() {
+                        data_requests[i] = val;
+                    }
+                    &data_requests[..(in_reqs.len().min(64u32) as usize)]
+                };
+
+                let mut events = heapless::Vec::<Event, 64>::new();
+                let in_evs = msg.get_events()?;
+                for ev in in_evs.iter() {
+                    match Event::from_reader(ev) {
+                        Ok(event) => {
+                            let _ = events.push(event);
+                        }
+
+                        Err(e) => {
+                            // ignore invalid/unknown events
+                            debug!("[{}] rejecting invalid event: {e}", client.address);
+                        }
+                    }
+                }
+
                 unpacked_data.reset(); // free up memory
 
-                self.handle_player_data(client, data).await
-            }
+                self.handle_player_data(client, data, reqs, &events).await
+            },
+
+            UpdateIcons(msg) => {
+                let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
+                client.set_icons(icons);
+                Ok(())
+            },
         });
 
         match result {
@@ -273,6 +293,7 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         account_id: i32,
         token: &str,
+        icons: PlayerIconData,
     ) -> HandlerResult<bool> {
         // check if already authorized
         if client.authorized() {
@@ -290,7 +311,7 @@ impl ConnectionHandler {
                 }
             };
 
-            self.on_login_success(client, token_data).await?;
+            self.on_login_success(client, token_data, icons).await?;
 
             Ok(true)
         } else {
@@ -303,12 +324,15 @@ impl ConnectionHandler {
         &self,
         client: &ClientStateHandle,
         token_data: TokenData,
+        icons: PlayerIconData,
     ) -> HandlerResult<()> {
         info!("[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id);
 
         if let Some(old_client) =
             self.all_clients.insert(token_data.account_id, Arc::downgrade(client))
         {
+            trace!("duplicate login detected for account ID {}", token_data.account_id);
+
             // there already was a client with this account ID, disconnect them
             if let Some(old_client) = old_client.upgrade() {
                 old_client.disconnect(Cow::Borrowed("Duplicate login detected, the same account logged in from a different location"));
@@ -316,6 +340,7 @@ impl ConnectionHandler {
         }
 
         client.set_account_data(token_data);
+        client.set_icons(icons);
 
         Ok(())
     }
@@ -391,6 +416,8 @@ impl ConnectionHandler {
         &self,
         client: &ClientStateHandle,
         data: PlayerState,
+        requests: &[i32],
+        events: &[Event],
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
@@ -405,20 +432,41 @@ impl ConnectionHandler {
             return Ok(());
         };
 
+        for event in events.iter() {
+            self.do_handle_event(client, &session, event)?;
+        }
+
         let mut nearby_ids = SmallVec::<[i32; 256]>::new();
         let mut culled_ids = SmallVec::<[i32; 256]>::new();
+        let mut out_events = SmallVec::<[Event; 64]>::new();
 
         // Lock the session to update the player data and discover the amount of players nearby
         {
             let mut players = session.players_write_lock();
-            players.insert(account_id, data.clone());
+
+            let entry = players.entry(account_id).or_default();
+            entry.state = data.clone();
+
+            // take up to 64 unread counter values
+            entry.unread_counter_values.retain(|k, v| {
+                if out_events.len() < out_events.capacity() {
+                    out_events.push(Event::CounterChange(CounterChangeEvent {
+                        item_id: *k,
+                        r#type: CounterChangeType::Set(*v),
+                    }));
+
+                    false
+                } else {
+                    true // keep the value
+                }
+            });
 
             // TODO (low): not sure if the downgrade is worth it
             let players = RwLockWriteGuard::downgrade(players);
 
             for (id, _player) in players.iter() {
                 // in debug, always send the local player, helps with debugging
-                // #[cfg(not(debug_assertions))]
+                #[cfg(not(debug_assertions))]
                 if *id == account_id {
                     continue;
                 }
@@ -440,15 +488,28 @@ impl ConnectionHandler {
         // TODO (high): adjust this
         const BYTES_PER_PLAYER: usize = 64;
         const BYTES_PER_CULLED: usize = 4;
-        const DEFAULT_PLAYER_DATA: &PlayerState = &PlayerState::DEFAULT;
+        const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67
+        const BYTES_PER_EVENT: usize = 16; // TODO
 
-        let to_allocate =
-            56 + nearby_ids.len() * BYTES_PER_PLAYER + culled_ids.len() * BYTES_PER_CULLED;
+        let to_allocate = 80
+            + nearby_ids.len() * BYTES_PER_PLAYER
+            + culled_ids.len() * BYTES_PER_CULLED
+            + requests.len() * BYTES_PER_REQUEST
+            + events.len() * BYTES_PER_EVENT;
+
+        tracing::debug!(
+            "nearby: {}, culled: {}, reqs: {}, allocate: {}",
+            nearby_ids.len(),
+            culled_ids.len(),
+            requests.len(),
+            to_allocate
+        );
 
         let buf = data::encode_message_heap!(self, to_allocate, msg => {
-            let players = session.players_read_lock();
-
             let mut level_data = msg.reborrow().init_level_data();
+
+            // encode player states of all players nearby
+            let players = session.players_read_lock();
             let mut players_data = level_data.reborrow().init_players(nearby_ids.len() as u32);
 
             for (i, id) in nearby_ids.iter().enumerate() {
@@ -456,18 +517,80 @@ impl ConnectionHandler {
 
                 // we do this small hack because there's a chance that player has left since the initial check,
                 // it's completely fine to just send default data in that case
-                let player = players.get(id).unwrap_or(DEFAULT_PLAYER_DATA);
+                let player = players.get(id).map(|x| &x.state).unwrap_or(&PlayerState::DEFAULT);
                 player.encode(p.reborrow());
             }
+
+            drop(players);
+
+            // encode ids of culled players
 
             let mut culled_data = level_data.reborrow().init_culled(culled_ids.len() as u32);
 
             for (i, id) in culled_ids.iter().enumerate() {
                 culled_data.reborrow().set(i as u32, *id);
             }
+
+            // encode responses to player metadata requests
+
+            let mut reqs_data = level_data.reborrow().init_display_datas(requests.len() as u32);
+            for (i, req) in requests.iter().enumerate() {
+                let mut p = reqs_data.reborrow().get(i as u32);
+
+                if let Some(client) = self.all_clients.get(req).and_then(|x| x.upgrade()) && let Some(adata) = client.account_data() {
+                    let icons = client.icons();
+                    p.set_account_id(adata.account_id);
+                    p.set_user_id(adata.user_id);
+                    p.set_username(adata.username.as_str());
+                    icons.encode(p.init_icons());
+                } else {
+                    p.set_account_id(0);
+                }
+            }
+
+            // encode events
+
+            let mut events_data = level_data.reborrow().init_events(events.len() as u32);
+            for (i, ev) in events.iter().enumerate() {
+                let mut e = events_data.reborrow().get(i as u32);
+                ev.encode(e.reborrow());
+            }
         })?;
 
-        client.send_unreliable_data_bufkind(buf);
+        // events make the message reliable
+        if events.is_empty() {
+            client.send_unreliable_data_bufkind(buf);
+        } else {
+            client.send_data_bufkind(buf);
+        }
+
+        Ok(())
+    }
+
+    fn do_handle_event(
+        &self,
+        client: &ClientStateHandle,
+        session: &GameSession,
+        event: &Event,
+    ) -> HandlerResult<()> {
+        must_auth(client)?;
+
+        match event {
+            Event::CounterChange(cc) => {
+                let (item_id, value) = session.triggers().handle_change(cc);
+
+                // go and tell all players about the change
+                let mut players = session.players_write_lock();
+                for player in players.values_mut() {
+                    if player.unread_counter_values.len() >= 1024 {
+                        // u asleep?
+                        continue;
+                    }
+
+                    player.unread_counter_values.insert(item_id, value);
+                }
+            }
+        }
 
         Ok(())
     }

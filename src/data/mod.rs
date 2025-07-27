@@ -28,10 +28,3 @@ macro_rules! encode_message {
 pub(crate) use decode_message_match;
 pub(crate) use encode_message;
 pub(crate) use encode_message_heap;
-
-pub fn heapless_str_from_reader<'a, const N: usize>(
-    reader: capnp::text::Reader<'a>,
-) -> Result<heapless::String<N>, DataDecodeError> {
-    let s = reader.to_str()?;
-    heapless::String::try_from(s).map_err(|_| DataDecodeError::StringTooLong(s.len(), N))
-}
