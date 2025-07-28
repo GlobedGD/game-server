@@ -34,7 +34,7 @@ use crate::{
     data,
     event::{CounterChangeEvent, CounterChangeType, Event},
     player_state::PlayerState,
-    session_manager::{GamePlayerState, GameSession, SessionManager},
+    session_manager::{GameSession, SessionManager},
 };
 
 pub struct ConnectionHandler {
@@ -131,7 +131,10 @@ impl AppHandler for ConnectionHandler {
 
         let account_id = client.account_id();
         if account_id != 0 {
-            self.all_clients.remove(&account_id);
+            // remove only if the client has not been replaced by a newer login
+            self.all_clients.remove_if(&account_id, |_, current_client| {
+                Weak::ptr_eq(current_client, &Arc::downgrade(client))
+            });
         }
     }
 
@@ -335,6 +338,10 @@ impl ConnectionHandler {
 
             // there already was a client with this account ID, disconnect them
             if let Some(old_client) = old_client.upgrade() {
+                if let Some(session) = old_client.deauthorize() {
+                    self.remove_from_session(&old_client, &session);
+                }
+
                 old_client.disconnect(Cow::Borrowed("Duplicate login detected, the same account logged in from a different location"));
             }
         }
@@ -466,7 +473,7 @@ impl ConnectionHandler {
 
             for (id, _player) in players.iter() {
                 // in debug, always send the local player, helps with debugging
-                #[cfg(not(debug_assertions))]
+                // #[cfg(not(debug_assertions))]
                 if *id == account_id {
                     continue;
                 }
@@ -491,11 +498,11 @@ impl ConnectionHandler {
         const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67
         const BYTES_PER_EVENT: usize = 16; // TODO
 
-        let to_allocate = 80
+        let to_allocate = 88
             + nearby_ids.len() * BYTES_PER_PLAYER
             + culled_ids.len() * BYTES_PER_CULLED
             + requests.len() * BYTES_PER_REQUEST
-            + events.len() * BYTES_PER_EVENT;
+            + out_events.len() * BYTES_PER_EVENT;
 
         tracing::debug!(
             "nearby: {}, culled: {}, reqs: {}, allocate: {}",
@@ -544,21 +551,22 @@ impl ConnectionHandler {
                     p.set_username(adata.username.as_str());
                     icons.encode(p.init_icons());
                 } else {
+                    debug!("Player data not found for account ID {}", req);
                     p.set_account_id(0);
                 }
             }
 
             // encode events
 
-            let mut events_data = level_data.reborrow().init_events(events.len() as u32);
-            for (i, ev) in events.iter().enumerate() {
+            let mut events_data = level_data.reborrow().init_events(out_events.len() as u32);
+            for (i, ev) in out_events.iter().enumerate() {
                 let mut e = events_data.reborrow().get(i as u32);
                 ev.encode(e.reborrow());
             }
         })?;
 
         // events make the message reliable
-        if events.is_empty() {
+        if out_events.is_empty() {
             client.send_unreliable_data_bufkind(buf);
         } else {
             client.send_data_bufkind(buf);
