@@ -19,6 +19,7 @@ use qunet::{
     },
 };
 use server_shared::{
+    SessionId,
     data::{GameServerData, PlayerIconData},
     encoding::EncodeMessageError,
     token_issuer::{TokenData, TokenIssuer},
@@ -46,6 +47,7 @@ pub struct ConnectionHandler {
     session_manager: SessionManager,
 
     all_clients: DashMap<i32, WeakClientStateHandle>,
+    all_rooms: DashMap<u32, u32>, // room_id -> passcode
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
@@ -252,6 +254,7 @@ impl ConnectionHandler {
             token_issuer: ArcSwap::new(Arc::new(None)),
             session_manager: SessionManager::new(),
             all_clients: DashMap::new(),
+            all_rooms: DashMap::new(),
         }
     }
 
@@ -287,6 +290,14 @@ impl ConnectionHandler {
     pub fn destroy_token_issuer(&self) {
         self.token_issuer.store(Arc::new(None));
         debug!("Token issuer destroyed");
+    }
+
+    pub fn add_server_room(&self, room_id: u32, passcode: u32) {
+        self.all_rooms.insert(room_id, passcode);
+    }
+
+    pub fn remove_server_room(&self, room_id: u32) {
+        self.all_rooms.remove(&room_id);
     }
 
     // Client api
@@ -380,18 +391,42 @@ impl ConnectionHandler {
             client.address, session_id, passcode
         );
 
-        let new_session = match self.session_manager.get_or_create_session(session_id, passcode) {
-            Ok(s) => s,
-            Err(_) => {
-                let buf = data::encode_message!(self, 128, msg => {
-                    let mut join_failed = msg.reborrow().init_join_session_failed();
-                    join_failed.set_reason(data::JoinSessionFailedReason::InvalidPasscode);
-                })?;
+        let session_id = SessionId::from(session_id);
 
-                client.send_data_bufkind(buf);
-                return Ok(());
+        if let Err(e) = self.do_join_session(client, session_id, passcode) {
+            let buf = data::encode_message!(self, 32, msg => {
+                let mut join_failed = msg.reborrow().init_join_session_failed();
+                join_failed.set_reason(e);
+            })?;
+
+            client.send_data_bufkind(buf);
+        }
+
+        Ok(())
+    }
+
+    fn do_join_session(
+        &self,
+        client: &ClientStateHandle,
+        session: SessionId,
+        passcode: u32,
+    ) -> Result<(), data::JoinSessionFailedReason> {
+        // ensure that the session is for a valid room
+        let room_id = session.room_id();
+
+        if room_id != 0 {
+            if let Some(correct_code) = self.all_rooms.get(&room_id) {
+                if *correct_code != 0 && *correct_code != passcode {
+                    debug!("incorrect passcode, expected {}, got {}", *correct_code, passcode);
+                    return Err(data::JoinSessionFailedReason::InvalidPasscode);
+                }
+            } else {
+                debug!("no room found for session {} (room id {})", session.as_u64(), room_id);
+                return Err(data::JoinSessionFailedReason::InvalidRoom);
             }
-        };
+        }
+
+        let new_session = self.session_manager.get_or_create_session(session.as_u64());
 
         if let Some(old_session) = client.set_session(new_session.clone()) {
             self.remove_from_session(client, &old_session);

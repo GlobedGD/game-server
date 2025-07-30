@@ -90,6 +90,23 @@ impl EventHandler for BridgeHandler {
                 error!("Central server login failed: {}", msg.get_reason()?.to_str()?);
                 client.disconnect();
             },
+
+            NotifyRoomCreated(msg) => {
+                let room_id = msg.get_room_id();
+                let passcode = msg.get_passcode();
+
+                unpacked_data.reset(); // free up memory
+
+                self.handle_room_created(room_id, passcode, client).await;
+            },
+
+            NotifyRoomDeleted(msg) => {
+                let room_id = msg.get_room_id();
+
+                unpacked_data.reset(); // free up memory
+
+                self.handle_room_deleted(room_id).await;
+            },
         });
 
         if let Err(e) = result {
@@ -165,5 +182,34 @@ impl BridgeHandler {
                 self.on_connection_error_helper(client, e).await;
             }
         })
+    }
+
+    async fn handle_room_created(&self, room_id: u32, passcode: u32, client: &Client<Self>) {
+        debug!("creating room {} with passcode {}", room_id, passcode);
+
+        if !self.authenticated() {
+            return;
+        }
+
+        self.server().handler().add_server_room(room_id, passcode);
+
+        // send reply
+        let buf = data::encode_message!(self, 32, msg => {
+            let mut ack = msg.init_room_created_ack();
+            ack.set_room_id(room_id);
+        })
+        .expect("failed to encode room created ack");
+
+        client.send_data_bufkind(buf);
+    }
+
+    async fn handle_room_deleted(&self, room_id: u32) {
+        debug!("deleting room {}", room_id);
+
+        if !self.authenticated() {
+            return;
+        }
+
+        self.server().handler().remove_server_room(room_id);
     }
 }

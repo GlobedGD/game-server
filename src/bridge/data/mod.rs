@@ -4,18 +4,24 @@ macro_rules! decode_message_match {
     };
 }
 
+macro_rules! encode_message_heap {
+    ($this:expr, $estcap:expr, $msg:ident => $code:expr) => {
+        server_shared::encode_message_heap!(server_shared::schema::srvc, $this.server(), $estcap, $msg => $code)
+    }
+}
 macro_rules! encode_message_unsafe {
     ($this:expr, $estcap:expr, $msg:ident => $code:expr) => {
         server_shared::encode_message_unsafe!(server_shared::schema::srvc, $this.server(), $estcap, $msg => $code)
     }
 }
 
-macro_rules! encode_message_heap {
+macro_rules! encode_message {
     ($this:expr, $estcap:expr, $msg:ident => $code:expr) => {
-        server_shared::encode_message_heap!(server_shared::schema::srvc, $this.server(), $estcap, $msg => $code)
+        server_shared::encode_message!(server_shared::schema::srvc, $this.server(), $estcap, $msg => $code)
     }
 }
 
 pub(crate) use decode_message_match;
+pub(crate) use encode_message;
 pub(crate) use encode_message_heap;
 pub(crate) use encode_message_unsafe;

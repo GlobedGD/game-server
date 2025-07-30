@@ -6,8 +6,6 @@ use rustc_hash::FxHashMap;
 
 use crate::{player_state::PlayerState, trigger_manager::TriggerManager};
 
-pub struct IncorrectPasscode;
-
 pub struct SessionManager {
     sessions: DashMap<u64, Arc<GameSession>>,
 }
@@ -17,21 +15,11 @@ impl SessionManager {
         Self { sessions: DashMap::new() }
     }
 
-    pub fn get_or_create_session(
-        &self,
-        session_id: u64,
-        passcode: u32,
-    ) -> Result<Arc<GameSession>, IncorrectPasscode> {
-        // TODO (medium): validate passcode
-        let _ = passcode;
-
-        let session = self
-            .sessions
+    pub fn get_or_create_session(&self, session_id: u64) -> Arc<GameSession> {
+        self.sessions
             .entry(session_id)
             .or_insert_with(|| Arc::new(GameSession::new(session_id)))
-            .clone();
-
-        Ok(session)
+            .clone()
     }
 
     pub fn delete_session_if_empty(&self, session_id: u64) {

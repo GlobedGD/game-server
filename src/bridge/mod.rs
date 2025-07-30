@@ -1,7 +1,5 @@
 /// Bridge to the central server.
 ///
-use std::sync::OnceLock;
-
 use qunet::{
     client::{Client, ClientHandle, ClientOutcome, ConnectionError},
     server::WeakServerHandle,
