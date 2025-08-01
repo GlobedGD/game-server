@@ -48,6 +48,7 @@ pub struct ConnectionHandler {
 
     all_clients: DashMap<i32, WeakClientStateHandle>,
     all_rooms: DashMap<u32, u32>, // room_id -> passcode
+    tickrate: usize,
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
@@ -255,6 +256,7 @@ impl ConnectionHandler {
             session_manager: SessionManager::new(),
             all_clients: DashMap::new(),
             all_rooms: DashMap::new(),
+            tickrate: config.tickrate,
         }
     }
 
@@ -359,6 +361,13 @@ impl ConnectionHandler {
 
         client.set_account_data(token_data);
         client.set_icons(icons);
+
+        let buf = data::encode_message!(self, 64, msg => {
+            let mut login_ok = msg.reborrow().init_login_ok();
+            login_ok.set_tickrate(self.tickrate as u16);
+        })?;
+
+        client.send_data_bufkind(buf);
 
         Ok(())
     }

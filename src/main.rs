@@ -83,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut builder = qunet::server::Server::builder()
         .with_memory_options(make_memory_limits(config.memory_usage))
+        .with_max_messages_per_second(config.tickrate + 10) // add 10 to account for various misc packets
         .with_app_handler(handler);
 
     if let Some(addr) = tcp_address {

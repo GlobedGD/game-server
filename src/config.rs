@@ -6,6 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use server_shared::config::env_replace;
 use thiserror::Error;
+use validator::{Validate, ValidationError};
 
 // Memory
 
@@ -77,7 +78,11 @@ fn default_log_rolling() -> bool {
     false
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+fn default_tickrate() -> usize {
+    30
+}
+
+#[derive(Debug, Deserialize, Serialize, Validate)]
 pub struct Config {
     /// The memory usage value (1 to 11), determines how much memory the server will preallocate for operations.
     #[serde(default = "default_memory_usage")]
@@ -129,6 +134,7 @@ pub struct Config {
     /// How many UDP sockets to bind. This is useful for load balancing on multi-core systems,
     /// but it does not work on Windows systems, and it is only useful when managing a large number of UDP connections.
     #[serde(default = "default_udp_binds")]
+    #[validate(range(min = 1, max = 64))]
     pub udp_binds: usize,
 
     /// Whether to enable logging to a file. If disabled, logs will only be printed to stdout.
@@ -139,6 +145,7 @@ pub struct Config {
     pub log_directory: PathBuf,
     /// Minimum log level to print. Logs below this level will be ignored. Possible values: 'trace', 'debug', 'info', 'warn', 'error'.
     #[serde(default = "default_log_level")]
+    #[validate(custom(function = "validate_log_level"))]
     pub log_level: String,
     /// Prefix for the filename of the log file.
     #[serde(default = "default_log_filename")]
@@ -151,6 +158,13 @@ pub struct Config {
     /// The path to the QDB file.
     #[serde(default)]
     pub qdb_path: Option<PathBuf>,
+
+    /// The tickrate of the server, which defines how often clients can (and will) send updates to the server when in a level.
+    /// Bumping this from the default of 30 will proportionally increase bandwidth and CPU usage,
+    /// but it may improve the smoothness of players. Values past 30 usually provide diminishing returns though.
+    #[serde(default = "default_tickrate")]
+    #[validate(range(min = 1, max = 240))]
+    pub tickrate: usize,
 }
 
 impl Default for Config {
@@ -176,6 +190,7 @@ impl Default for Config {
             log_level: default_log_level(),
             log_filename: default_log_filename(),
             log_rolling: default_log_rolling(),
+            tickrate: default_tickrate(),
         }
     }
 }
@@ -184,8 +199,10 @@ impl Default for Config {
 pub enum ConfigError {
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
-    #[error("Error parsing configuration: {0}")]
+    #[error("Parse error: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("Validation error: {0}")]
+    Validation(#[from] validator::ValidationErrors),
 }
 
 impl Config {
@@ -196,6 +213,9 @@ impl Config {
 
         let mut config = Self::load(&config_path)?;
         config.replace_with_env();
+        config.validate()?;
+
+        
 
         Ok(config)
     }
@@ -218,11 +238,14 @@ impl Config {
     fn replace_with_env(&mut self) {
         env_replace("GLOBED_GS_MEMORY_USAGE", &mut self.memory_usage);
 
-        env_replace("GLOBED_GS_LOG_FILE_ENABLED", &mut self.log_file_enabled);
-        env_replace("GLOBED_GS_LOG_DIRECTORY", &mut self.log_directory);
-        env_replace("GLOBED_GS_LOG_LEVEL", &mut self.log_level);
-        env_replace("GLOBED_GS_LOG_FILENAME", &mut self.log_filename);
-        env_replace("GLOBED_GS_LOG_ROLLING", &mut self.log_rolling);
+        env_replace("GLOBED_GS_CENTRAL_URL", &mut self.central_server_url);
+        env_replace("GLOBED_GS_CENTRAL_PASSWORD", &mut self.central_server_password);
+        env_replace("GLOBED_GS_QUIC_CERT_PATH", &mut self.quic_cert_path);
+
+        env_replace("GLOBED_GS_SERVER_NAME", &mut self.server_name);
+        env_replace("GLOBED_GS_SERVER_ID", &mut self.server_id);
+        env_replace("GLOBED_GS_SERVER_REGION", &mut self.server_region);
+        env_replace("GLOBED_GS_SERVER_ADDRESS", &mut self.server_address);
 
         env_replace("GLOBED_GS_ENABLE_TCP", &mut self.enable_tcp);
         env_replace("GLOBED_GS_TCP_ADDRESS", &mut self.tcp_address);
@@ -232,8 +255,21 @@ impl Config {
         env_replace("GLOBED_GS_UDP_ADDRESS", &mut self.udp_address);
         env_replace("GLOBED_GS_UDP_BINDS", &mut self.udp_binds);
 
+        env_replace("GLOBED_GS_LOG_FILE_ENABLED", &mut self.log_file_enabled);
+        env_replace("GLOBED_GS_LOG_DIRECTORY", &mut self.log_directory);
+        env_replace("GLOBED_GS_LOG_LEVEL", &mut self.log_level);
+        env_replace("GLOBED_GS_LOG_FILENAME", &mut self.log_filename);
+        env_replace("GLOBED_GS_LOG_ROLLING", &mut self.log_rolling);
+
         env_replace("GLOBED_GS_QDB_PATH", &mut self.qdb_path);
 
-        env_replace("GLOBED_GS_CENTRAL_URL", &mut self.central_server_url);
+        env_replace("GLOBED_GS_TICKRATE", &mut self.tickrate);
+    }
+}
+
+fn validate_log_level(level: &str) -> Result<(), ValidationError> {
+    match level.to_lowercase().as_str() {
+        "trace" | "debug" | "info" | "warn" | "error" => Ok(()),
+        _ => Err(ValidationError::new("invalid log level")),
     }
 }
