@@ -14,6 +14,7 @@ pub struct ClientData {
     session_id: AtomicU64,
     session: Mutex<Option<Arc<GameSession>>>,
     icons: Mutex<PlayerIconData>,
+    roles: OnceLock<heapless::Vec<u8, 64>>,
     deauthorized: AtomicBool,
 }
 
@@ -84,5 +85,13 @@ impl ClientData {
 
     pub fn icons(&self) -> PlayerIconData {
         *self.icons.lock()
+    }
+
+    pub fn set_roles(&self, roles: heapless::Vec<u8, 64>) {
+        self.roles.set(roles).expect("attempting to set user roles twice");
+    }
+
+    pub fn roles(&self) -> Option<&heapless::Vec<u8, 64>> {
+        self.roles.get()
     }
 }

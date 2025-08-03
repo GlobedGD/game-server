@@ -2,7 +2,8 @@ use server_shared::encoding::DataDecodeError;
 
 use crate::data::event;
 
-pub const EVENT_COUNTER_CHANGE: u16 = 1;
+const EVENT_GLOBED_BASE: u16 = 0xf000;
+pub const EVENT_COUNTER_CHANGE: u16 = EVENT_GLOBED_BASE + 1;
 
 pub enum CounterChangeType {
     Set(i32),

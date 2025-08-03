@@ -9,7 +9,7 @@ use std::{
 
 use crate::handler::ConnectionHandler;
 
-use super::data;
+use super::{data, server_role::ServerRole};
 use qunet::{
     client::{Client, ClientHandle, ConnectionError, EventHandler},
     message::MsgData,
@@ -58,7 +58,7 @@ impl EventHandler for BridgeHandler {
 
     async fn on_disconnected(&self, client: &ClientHandle<Self>) {
         self.set_authenticated(false);
-        self.server().handler().destroy_token_issuer();
+        self.server().handler().destroy_bridge_values();
 
         warn!("Disconnected from the central server, attempting to reconnect...");
 
@@ -83,7 +83,16 @@ impl EventHandler for BridgeHandler {
                     return;
                 }
 
+                let in_roles = msg.get_roles()?;
+                let mut roles = Vec::with_capacity(in_roles.len() as usize);
+
+                for role in in_roles.iter() {
+                    roles.push(ServerRole::from_reader(role)?);
+                }
+
+
                 self.set_authenticated(true);
+                self.server().handler().set_server_roles(roles);
             },
 
             LoginFailed(msg) => {

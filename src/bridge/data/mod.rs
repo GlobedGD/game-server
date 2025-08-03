@@ -1,3 +1,5 @@
+pub use server_shared::schema::srvc::*;
+
 macro_rules! decode_message_match {
     ($this:expr, $data:expr, $unpacked_data:ident, {$($variant:ident($msg_var:ident) => {  $($t:tt)* }),* $(,)?}) => {
         server_shared::decode_message_match!(server_shared::schema::srvc, $this.server(), $data, $unpacked_data, {$($variant($msg_var) => {  $($t)* }),*})

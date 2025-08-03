@@ -29,7 +29,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    bridge::Bridge,
+    bridge::{Bridge, ServerRole},
     client_data::ClientData,
     config::Config,
     data,
@@ -44,6 +44,7 @@ pub struct ConnectionHandler {
     data: GameServerData,
     bridge: Bridge,
     token_issuer: ArcSwap<Option<TokenIssuer>>,
+    roles: ArcSwap<Vec<ServerRole>>,
     session_manager: SessionManager,
 
     all_clients: DashMap<i32, WeakClientStateHandle>,
@@ -253,6 +254,7 @@ impl ConnectionHandler {
             data,
             bridge,
             token_issuer: ArcSwap::new(Arc::new(None)),
+            roles: ArcSwap::new(Arc::new(Vec::new())),
             session_manager: SessionManager::new(),
             all_clients: DashMap::new(),
             all_rooms: DashMap::new(),
@@ -289,9 +291,15 @@ impl ConnectionHandler {
         Ok(())
     }
 
-    pub fn destroy_token_issuer(&self) {
+    pub fn set_server_roles(&self, roles: Vec<ServerRole>) {
+        self.roles.store(Arc::new(roles));
+    }
+
+    pub fn destroy_bridge_values(&self) {
+        debug!("Destroying bridge values, disconnected");
+
         self.token_issuer.store(Arc::new(None));
-        debug!("Token issuer destroyed");
+        self.roles.store(Arc::new(Vec::new()));
     }
 
     pub fn add_server_room(&self, room_id: u32, passcode: u32) {
@@ -339,7 +347,7 @@ impl ConnectionHandler {
     async fn on_login_success(
         &self,
         client: &ClientStateHandle,
-        token_data: TokenData,
+        mut token_data: TokenData,
         icons: PlayerIconData,
     ) -> HandlerResult<()> {
         info!("[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id);
@@ -357,6 +365,28 @@ impl ConnectionHandler {
 
                 old_client.disconnect(Cow::Borrowed("Duplicate login detected, the same account logged in from a different location"));
             }
+        }
+
+        // retrieve their roles
+        if let Some(roles_str) = token_data.roles_str.as_ref() {
+            let server_roles = self.roles.load();
+            let mut roles = heapless::Vec::new();
+
+            for role in roles_str.split(',').filter(|s| !s.is_empty()) {
+                if let Some(role) = server_roles.iter().find(|r| r.string_id == role) {
+                    let _ = roles.push(role.id);
+                } else {
+                    warn!(
+                        "[{} @ {}] unknown role '{}' found in token",
+                        token_data.account_id, client.address, role
+                    );
+                }
+            }
+
+            client.set_roles(roles);
+
+            // free memory held by the role string
+            token_data.roles_str = None;
         }
 
         client.set_account_data(token_data);
@@ -517,7 +547,7 @@ impl ConnectionHandler {
 
             for (id, _player) in players.iter() {
                 // in debug, always send the local player, helps with debugging
-                // #[cfg(not(debug_assertions))]
+                #[cfg(not(debug_assertions))]
                 if *id == account_id {
                     continue;
                 }
@@ -593,7 +623,20 @@ impl ConnectionHandler {
                     p.set_account_id(adata.account_id);
                     p.set_user_id(adata.user_id);
                     p.set_username(adata.username.as_str());
-                    icons.encode(p.init_icons());
+                    icons.encode(p.reborrow().init_icons());
+
+                    if let Some(roles) = client.roles() {
+                        if let Err(e) = p.set_roles(roles.as_slice()) {
+                            warn!(
+                                "[{}] failed to encode roles for player {}: {}",
+                                client.address, adata.account_id, e
+                            );
+
+                            p.init_roles(0);
+                        }
+                    } else {
+                        p.init_roles(0);
+                    }
                 } else {
                     debug!("Player data not found for account ID {}", req);
                     p.set_account_id(0);
