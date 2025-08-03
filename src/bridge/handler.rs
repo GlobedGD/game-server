@@ -203,7 +203,7 @@ impl BridgeHandler {
         self.server().handler().add_server_room(room_id, passcode);
 
         // send reply
-        let buf = data::encode_message!(self, 32, msg => {
+        let buf = data::encode_message!(self, 40, msg => {
             let mut ack = msg.init_room_created_ack();
             ack.set_room_id(room_id);
         })
