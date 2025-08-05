@@ -26,6 +26,8 @@ pub mod data;
 pub mod event;
 pub mod handler;
 pub mod player_state;
+#[cfg(feature = "scripting")]
+pub mod scripting;
 pub mod session_manager;
 pub mod trigger_manager;
 

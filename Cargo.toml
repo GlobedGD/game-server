@@ -9,7 +9,10 @@ capnp = { version = "0.21.2", default-features = false, features = [
     "std",
 ] }
 heapless = "0.8.0"
-parking_lot = { version = "0.12.4", features = ["hardware-lock-elision", "send_guard"] }
+parking_lot = { version = "0.12.4", features = [
+    "hardware-lock-elision",
+    "send_guard",
+] }
 qunet = { path = "../qunet/qunet", features = ["client"] }
 rand = "0.9.1"
 server-shared = { path = "../server-shared", features = ["game", "srvc"] }

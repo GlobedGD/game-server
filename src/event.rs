@@ -1,9 +1,12 @@
+use qunet::buffers::ByteReader;
 use server_shared::encoding::DataDecodeError;
 
 use crate::data::event;
 
 const EVENT_GLOBED_BASE: u16 = 0xf000;
 pub const EVENT_COUNTER_CHANGE: u16 = EVENT_GLOBED_BASE + 1;
+pub const EVENT_PLAYER_JOIN: u16 = EVENT_GLOBED_BASE + 2;
+pub const EVENT_PLAYER_LEAVE: u16 = EVENT_GLOBED_BASE + 3;
 
 pub enum CounterChangeType {
     Set(i32),
@@ -17,11 +20,28 @@ pub struct CounterChangeEvent {
     pub r#type: CounterChangeType,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IntOrFloat {
+    Int(i32),
+    Float(f32),
+}
+
+#[non_exhaustive]
 pub enum Event {
     CounterChange(CounterChangeEvent),
+
+    /// Represents an event for the script system
+    Scripted {
+        r#type: u16,
+        args: heapless::Vec<IntOrFloat, 5>,
+    },
+
+    PlayerJoin(i32),
+    PlayerLeave(i32),
 }
 
 impl Event {
+    #[allow(non_contiguous_range_endpoints)]
     pub fn from_reader(reader: event::Reader<'_>) -> Result<Self, DataDecodeError> {
         match reader.get_type() {
             EVENT_COUNTER_CHANGE => {
@@ -48,6 +68,35 @@ impl Event {
                 Ok(Event::CounterChange(CounterChangeEvent { item_id, r#type }))
             }
 
+            r#type @ 0..EVENT_GLOBED_BASE => {
+                let mut args = heapless::Vec::new();
+
+                let mut reader = ByteReader::new(reader.get_data()?);
+                let count = reader.read_u8()?;
+
+                if count > args.capacity() as u8 {
+                    return Err(DataDecodeError::ValidationFailed);
+                }
+
+                // decode argument types, 1 bit per argument, high bit means float, low bit means int
+                let type_byte = reader.read_u8()?;
+
+                for i in 0..count {
+                    let shift = 7 - i;
+                    let bit = (type_byte >> shift) & 1;
+
+                    let arg = if bit == 1 {
+                        IntOrFloat::Float(reader.read_f32()?)
+                    } else {
+                        IntOrFloat::Int(reader.read_i32()?)
+                    };
+
+                    let _ = args.push(arg);
+                }
+
+                Ok(Event::Scripted { r#type, args })
+            }
+
             _ => Err(DataDecodeError::ValidationFailed),
         }
     }
@@ -55,6 +104,9 @@ impl Event {
     pub fn type_int(&self) -> u16 {
         match self {
             Event::CounterChange(_) => EVENT_COUNTER_CHANGE,
+            Event::Scripted { r#type, .. } => *r#type,
+            Event::PlayerJoin(_) => EVENT_PLAYER_JOIN,
+            Event::PlayerLeave(_) => EVENT_PLAYER_LEAVE,
         }
     }
 
@@ -83,6 +135,26 @@ impl Event {
 
                 data.copy_from_slice(&packed_data.to_le_bytes());
 
+                writer.set_data(&data);
+            }
+
+            Event::Scripted { r#type: _, args: _ } => {
+                // let mut data = [0u8; 128];
+
+                // // encode argument types
+                // let mut type_byte = 0u8;
+                unimplemented!()
+            }
+
+            Event::PlayerJoin(player_id) => {
+                let mut data = [0u8; 4];
+                data.copy_from_slice(&player_id.to_le_bytes());
+                writer.set_data(&data);
+            }
+
+            Event::PlayerLeave(player_id) => {
+                let mut data = [0u8; 4];
+                data.copy_from_slice(&player_id.to_le_bytes());
                 writer.set_data(&data);
             }
         }

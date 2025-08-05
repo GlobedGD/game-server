@@ -3,7 +3,11 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use rustc_hash::FxHashMap;
+use server_shared::SessionId;
+use tracing::error;
 
+#[cfg(feature = "scripting")]
+use crate::scripting::ScriptManager;
 use crate::{player_state::PlayerState, trigger_manager::TriggerManager};
 
 pub struct SessionManager {
@@ -46,14 +50,30 @@ pub struct GameSession {
     id: u64,
     players: RwLock<FxHashMap<i32, GamePlayerState>>,
     triggers: TriggerManager,
+    #[cfg(feature = "scripting")]
+    scripting: Option<ScriptManager>,
 }
 
 impl GameSession {
     fn new(id: u64) -> Self {
+        let level_id = SessionId::from(id).level_id();
+
+        #[cfg(feature = "scripting")]
+        let scripting = match ScriptManager::new_with_script(level_id) {
+            Ok(Some(m)) => Some(m),
+            Ok(None) => None,
+            Err(e) => {
+                error!("failed to load script for level {level_id}: {e}");
+                None
+            }
+        };
+
         Self {
             id,
             players: RwLock::new(FxHashMap::default()),
             triggers: TriggerManager::default(),
+            #[cfg(feature = "scripting")]
+            scripting,
         }
     }
 
@@ -63,6 +83,11 @@ impl GameSession {
 
     pub fn triggers(&self) -> &TriggerManager {
         &self.triggers
+    }
+
+    #[cfg(feature = "scripting")]
+    pub fn scripting(&self) -> Option<&ScriptManager> {
+        self.scripting.as_ref()
     }
 
     pub fn add_player(&self, player_id: i32) {

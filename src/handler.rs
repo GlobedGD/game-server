@@ -473,6 +473,8 @@ impl ConnectionHandler {
 
         new_session.add_player(client.account_id());
 
+        self.emit_script_event(client, &new_session, &Event::PlayerJoin(client.account_id()));
+
         Ok(())
     }
 
@@ -489,8 +491,11 @@ impl ConnectionHandler {
     }
 
     fn remove_from_session(&self, client: &ClientStateHandle, session: &GameSession) {
-        session.remove_player(client.account_id());
+        let account_id = client.account_id();
+        session.remove_player(account_id);
         self.session_manager.delete_session_if_empty(session.id());
+
+        self.emit_script_event(client, session, &Event::PlayerLeave(account_id));
     }
 
     async fn handle_player_data(
@@ -578,13 +583,13 @@ impl ConnectionHandler {
             + requests.len() * BYTES_PER_REQUEST
             + out_events.len() * BYTES_PER_EVENT;
 
-        tracing::debug!(
-            "nearby: {}, culled: {}, reqs: {}, allocate: {}",
-            nearby_ids.len(),
-            culled_ids.len(),
-            requests.len(),
-            to_allocate
-        );
+        // tracing::debug!(
+        //     "nearby: {}, culled: {}, reqs: {}, allocate: {}",
+        //     nearby_ids.len(),
+        //     culled_ids.len(),
+        //     requests.len(),
+        //     to_allocate
+        // );
 
         let buf = data::encode_message_heap!(self, to_allocate, msg => {
             let mut level_data = msg.reborrow().init_level_data();
@@ -670,6 +675,9 @@ impl ConnectionHandler {
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
+        self.emit_script_event(client, session, event);
+
+        #[allow(clippy::single_match)]
         match event {
             Event::CounterChange(cc) => {
                 let (item_id, value) = session.triggers().handle_change(cc);
@@ -685,9 +693,29 @@ impl ConnectionHandler {
                     player.unread_counter_values.insert(item_id, value);
                 }
             }
+
+            _ => {}
         }
 
         Ok(())
+    }
+
+    #[inline]
+    #[cfg(not(feature = "scripting"))]
+    fn emit_script_event(&self, client: &ClientStateHandle, session: &GameSession, event: &Event) {}
+
+    #[cfg(feature = "scripting")]
+    fn emit_script_event(&self, client: &ClientStateHandle, session: &GameSession, event: &Event) {
+        if let Some(sm) = session.scripting() {
+            if let Err(e) = sm.handle_event(client.account_id(), event) {
+                warn!("[{}] failed to handle scripted event: {}", client.address, e);
+            }
+        } else if let Event::Scripted { r#type, .. } = event {
+            warn!(
+                "[{}] received a scripted event with type {type} but no script is set",
+                client.address
+            );
+        }
     }
 }
 
