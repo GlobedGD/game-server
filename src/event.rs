@@ -33,7 +33,7 @@ pub enum IntOrFloat {
     Float(f32),
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct SpawnInfo {
     pub group_id: i32,
     pub delay: f32,
@@ -215,6 +215,8 @@ impl Event {
                         buffer.write_varuint(*key as u64)?;
                     }
                 }
+
+                writer.set_data(buffer.written());
             }
 
             Event::SetItem { item_id, value } => {
@@ -224,7 +226,7 @@ impl Event {
                 buffer.write_varuint(*item_id as u64)?;
                 buffer.write_varint(*value as i64)?;
 
-                writer.set_data(&data);
+                writer.set_data(buffer.written());
             }
 
             Event::PlayerJoin(player_id) => {
