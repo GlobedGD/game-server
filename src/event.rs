@@ -1,13 +1,19 @@
-use qunet::buffers::ByteReader;
+use qunet::buffers::{Bits, ByteReader, ByteWriter, ByteWriterError};
 use server_shared::encoding::DataDecodeError;
+use smallvec::SmallVec;
+use thiserror::Error;
 
 use crate::data::event;
 
 const EVENT_GLOBED_BASE: u16 = 0xf000;
-pub const EVENT_COUNTER_CHANGE: u16 = EVENT_GLOBED_BASE + 1;
-pub const EVENT_PLAYER_JOIN: u16 = EVENT_GLOBED_BASE + 2;
-pub const EVENT_PLAYER_LEAVE: u16 = EVENT_GLOBED_BASE + 3;
+pub const EVENT_COUNTER_CHANGE: u16 = 0xf001;
+pub const EVENT_PLAYER_JOIN: u16 = 0xf002;
+pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
 
+pub const EVENT_SPAWN_GROUP: u16 = 0xf010;
+pub const EVENT_SET_ITEM: u16 = 0xf011;
+
+#[derive(Clone)]
 pub enum CounterChangeType {
     Set(i32),
     Add(i32),
@@ -15,6 +21,7 @@ pub enum CounterChangeType {
     Divide(f32),
 }
 
+#[derive(Clone)]
 pub struct CounterChangeEvent {
     pub item_id: u32,
     pub r#type: CounterChangeType,
@@ -26,9 +33,30 @@ pub enum IntOrFloat {
     Float(f32),
 }
 
+#[derive(Clone)]
+pub struct SpawnInfo {
+    pub group_id: i32,
+    pub delay: f32,
+    pub delay_variance: f32,
+    pub ordered: bool,
+    pub remaps: SmallVec<[u32; 6]>,
+}
+
+#[derive(Debug, Error)]
+pub enum EventEncodeError {
+    #[error("{0}")]
+    Encode(#[from] ByteWriterError),
+    #[error("Invalid event data")]
+    InvalidData,
+}
+
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum Event {
     CounterChange(CounterChangeEvent),
+
+    PlayerJoin(i32),
+    PlayerLeave(i32),
 
     /// Represents an event for the script system
     Scripted {
@@ -36,8 +64,12 @@ pub enum Event {
         args: heapless::Vec<IntOrFloat, 5>,
     },
 
-    PlayerJoin(i32),
-    PlayerLeave(i32),
+    SpawnGroup(SpawnInfo),
+
+    SetItem {
+        item_id: u32,
+        value: i32,
+    },
 }
 
 impl Event {
@@ -105,12 +137,14 @@ impl Event {
         match self {
             Event::CounterChange(_) => EVENT_COUNTER_CHANGE,
             Event::Scripted { r#type, .. } => *r#type,
+            Event::SpawnGroup { .. } => EVENT_SPAWN_GROUP,
+            Event::SetItem { .. } => EVENT_SET_ITEM,
             Event::PlayerJoin(_) => EVENT_PLAYER_JOIN,
             Event::PlayerLeave(_) => EVENT_PLAYER_LEAVE,
         }
     }
 
-    pub fn encode(&self, mut writer: event::Builder<'_>) {
+    pub fn encode(&self, mut writer: event::Builder<'_>) -> Result<(), EventEncodeError> {
         writer.set_type(self.type_int());
 
         match self {
@@ -146,6 +180,53 @@ impl Event {
                 unimplemented!()
             }
 
+            Event::SpawnGroup(info) => {
+                let mut data = [0u8; 40];
+                let mut buffer = ByteWriter::new(&mut data);
+
+                buffer.write_u8(0); // flags, set later
+                buffer.write_varuint(info.group_id as u64)?;
+
+                let mut bits = Bits::new(0u8);
+
+                if info.delay != 0.0 {
+                    bits.set_bit(0);
+                    buffer.write_f32(info.delay);
+
+                    if info.delay_variance != 0.0 {
+                        bits.set_bit(1);
+                        buffer.write_f32(info.delay_variance);
+                    }
+                }
+
+                if info.ordered {
+                    bits.set_bit(2);
+                }
+
+                if !info.remaps.is_empty() {
+                    if info.remaps.len() > 255 {
+                        return Err(EventEncodeError::InvalidData);
+                    }
+
+                    bits.set_bit(3);
+                    buffer.write_u8(info.remaps.len() as u8);
+
+                    for key in info.remaps.iter() {
+                        buffer.write_varuint(*key as u64)?;
+                    }
+                }
+            }
+
+            Event::SetItem { item_id, value } => {
+                let mut data = [0u8; 16];
+                let mut buffer = ByteWriter::new(&mut data);
+
+                buffer.write_varuint(*item_id as u64)?;
+                buffer.write_varint(*value as i64)?;
+
+                writer.set_data(&data);
+            }
+
             Event::PlayerJoin(player_id) => {
                 let mut data = [0u8; 4];
                 data.copy_from_slice(&player_id.to_le_bytes());
@@ -158,5 +239,7 @@ impl Event {
                 writer.set_data(&data);
             }
         }
+
+        Ok(())
     }
 }

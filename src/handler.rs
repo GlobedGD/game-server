@@ -547,7 +547,13 @@ impl ConnectionHandler {
                 }
             });
 
-            // TODO (low): not sure if the downgrade is worth it
+            // and unread events!
+            while out_events.len() < out_events.capacity()
+                && let Some(ev) = entry.unread_events.pop_front()
+            {
+                out_events.push(ev);
+            }
+
             let players = RwLockWriteGuard::downgrade(players);
 
             for (id, _player) in players.iter() {
@@ -651,9 +657,12 @@ impl ConnectionHandler {
             // encode events
 
             let mut events_data = level_data.reborrow().init_events(out_events.len() as u32);
+
             for (i, ev) in out_events.iter().enumerate() {
                 let mut e = events_data.reborrow().get(i as u32);
-                ev.encode(e.reborrow());
+                if let Err(e) = ev.encode(e.reborrow()) {
+                    warn!("[{}] failed to encode event: {}", client.address, e);
+                }
             }
         })?;
 
