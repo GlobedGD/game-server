@@ -54,11 +54,11 @@ pub struct GameSession {
 }
 
 impl GameSession {
+    #[cfg(feature = "scripting")]
     fn new(id: u64) -> Arc<Self> {
         let level_id = SessionId::from(id).level_id();
 
         Arc::new_cyclic(|data| {
-            #[cfg(feature = "scripting")]
             let scripting = match ScriptManager::new_with_script(level_id, data.clone()) {
                 Ok(Some(m)) => Some(m),
                 Ok(None) => None,
@@ -72,9 +72,17 @@ impl GameSession {
                 id,
                 players: RwLock::new(FxHashMap::default()),
                 triggers: TriggerManager::default(),
-                #[cfg(feature = "scripting")]
                 scripting,
             }
+        })
+    }
+
+    #[cfg(not(feature = "scripting"))]
+    fn new(id: u64) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            players: RwLock::new(FxHashMap::default()),
+            triggers: TriggerManager::default(),
         })
     }
 
