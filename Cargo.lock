@@ -119,6 +119,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -304,6 +314,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
 name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -423,6 +439,7 @@ dependencies = [
  "const-default",
  "dashmap",
  "heapless",
+ "mlua",
  "parking_lot",
  "qunet",
  "rand",
@@ -800,6 +817,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "luau0-src"
+version = "0.15.5+luau686"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e15ce6a2b8f9d8acf7cd38f22a86e4325d5d5474ef9861ad9c4f13f1dab1ea6"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "lz4_flex"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -838,6 +864,34 @@ dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "mlua"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2fea92b2adabd51808311b101551d6e3f8602b65e9fae51f7ad5b3d500f4cd"
+dependencies = [
+ "bstr",
+ "either",
+ "futures-util",
+ "mlua-sys",
+ "num-traits",
+ "parking_lot",
+ "rustc-hash",
+ "rustversion",
+]
+
+[[package]]
+name = "mlua-sys"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d4dc9cfc5a7698899802e97480617d9726f7da78c910db989d4d0fd4991d900"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "luau0-src",
+ "pkg-config",
 ]
 
 [[package]]
@@ -889,6 +943,15 @@ name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
+
+[[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "object"

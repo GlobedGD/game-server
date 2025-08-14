@@ -30,9 +30,19 @@ rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 const-default = { version = "1.0.0", features = ["derive"] }
 validator = { version = "0.20.0", features = ["derive"] }
+mlua = { version = "0.11.1", features = [
+    "async",
+    "luau-jit",
+    "send",
+], optional = true }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5"
 
 [build-dependencies]
 capnpc = "0.21.1"
+
+[features]
+default = []
+scripting = ["dep:mlua"]
+all = ["scripting"]
