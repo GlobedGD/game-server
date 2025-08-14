@@ -703,6 +703,17 @@ impl ConnectionHandler {
                 }
             }
 
+            Event::TwoPlayerLinkRequest { player_id, player1 } => {
+                // simply forward the request to the other player
+                let mut players = session.players_write_lock();
+                if let Some(player) = players.get_mut(player_id) {
+                    player.push_event(Event::TwoPlayerLinkRequest {
+                        player_id: client.account_id(),
+                        player1: !*player1,
+                    });
+                }
+            }
+
             _ => {}
         }
 

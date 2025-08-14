@@ -43,6 +43,16 @@ impl GamePlayerState {
             unread_events: VecDeque::new(),
         }
     }
+
+    #[inline]
+    pub fn push_event(&mut self, event: Event) -> bool {
+        if self.unread_events.len() >= 512 {
+            false
+        } else {
+            self.unread_events.push_back(event);
+            true
+        }
+    }
 }
 
 pub struct GameSession {
@@ -123,13 +133,13 @@ impl GameSession {
 
     pub fn push_event(&self, player_id: i32, event: Event) {
         if let Some(player) = self.players.write().get_mut(&player_id) {
-            player.unread_events.push_back(event);
+            player.push_event(event);
         }
     }
 
     pub fn push_event_to_all(&self, event: Event) {
         for player in self.players.write().values_mut() {
-            player.unread_events.push_back(event.clone());
+            player.push_event(event.clone());
         }
     }
 }
