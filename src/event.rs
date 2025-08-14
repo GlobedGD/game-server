@@ -13,6 +13,7 @@ pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
 pub const EVENT_SPAWN_GROUP: u16 = 0xf010;
 pub const EVENT_SET_ITEM: u16 = 0xf011;
 pub const EVENT_2P_LINK_REQUEST: u16 = 0xf100;
+pub const EVENT_2P_UNLINK: u16 = 0xf101;
 
 #[derive(Clone)]
 pub enum CounterChangeType {
@@ -75,6 +76,10 @@ pub enum Event {
     TwoPlayerLinkRequest {
         player_id: i32,
         player1: bool,
+    },
+
+    TwoPlayerUnlink {
+        player_id: i32,
     },
 }
 
@@ -145,6 +150,14 @@ impl Event {
                 Ok(Event::TwoPlayerLinkRequest { player_id, player1 })
             }
 
+            EVENT_2P_UNLINK => {
+                let data = reader.get_data()?;
+
+                let player_id = ByteReader::new(data).read_i32()?;
+
+                Ok(Event::TwoPlayerUnlink { player_id })
+            }
+
             _ => Err(DataDecodeError::ValidationFailed),
         }
     }
@@ -158,6 +171,7 @@ impl Event {
             Event::PlayerJoin(_) => EVENT_PLAYER_JOIN,
             Event::PlayerLeave(_) => EVENT_PLAYER_LEAVE,
             Event::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
+            Event::TwoPlayerUnlink { .. } => EVENT_2P_UNLINK,
         }
     }
 
@@ -266,6 +280,12 @@ impl Event {
                 buffer.write_bool(*player1);
 
                 writer.set_data(buffer.written());
+            }
+
+            Event::TwoPlayerUnlink { player_id } => {
+                let mut data = [0u8; 4];
+                data.copy_from_slice(&player_id.to_le_bytes());
+                writer.set_data(&data);
             }
         }
 

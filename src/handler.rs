@@ -704,14 +704,20 @@ impl ConnectionHandler {
             }
 
             Event::TwoPlayerLinkRequest { player_id, player1 } => {
-                // simply forward the request to the other player
-                let mut players = session.players_write_lock();
-                if let Some(player) = players.get_mut(player_id) {
-                    player.push_event(Event::TwoPlayerLinkRequest {
+                session.push_event(
+                    *player_id,
+                    Event::TwoPlayerLinkRequest {
                         player_id: client.account_id(),
                         player1: !*player1,
-                    });
-                }
+                    },
+                );
+            }
+
+            Event::TwoPlayerUnlink { player_id } => {
+                session.push_event(
+                    *player_id,
+                    Event::TwoPlayerUnlink { player_id: client.account_id() },
+                );
             }
 
             _ => {}
@@ -722,7 +728,7 @@ impl ConnectionHandler {
 
     #[inline]
     #[cfg(not(feature = "scripting"))]
-    fn emit_script_event(&self, client: &ClientStateHandle, session: &GameSession, event: &Event) {}
+    fn emit_script_event(&self, _: &ClientStateHandle, _: &GameSession, _: &Event) {}
 
     #[cfg(feature = "scripting")]
     fn emit_script_event(&self, client: &ClientStateHandle, session: &GameSession, event: &Event) {
