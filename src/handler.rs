@@ -558,7 +558,7 @@ impl ConnectionHandler {
 
             for (id, _player) in players.iter() {
                 // in debug, always send the local player, helps with debugging
-                #[cfg(not(debug_assertions))]
+                // #[cfg(not(debug_assertions))]
                 if *id == account_id {
                     continue;
                 }
@@ -581,9 +581,9 @@ impl ConnectionHandler {
         const BYTES_PER_PLAYER: usize = 64;
         const BYTES_PER_CULLED: usize = 4;
         const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67
-        const BYTES_PER_EVENT: usize = 16; // TODO
+        const BYTES_PER_EVENT: usize = 32; // TODO
 
-        let to_allocate = 88
+        let to_allocate = 96
             + nearby_ids.len() * BYTES_PER_PLAYER
             + culled_ids.len() * BYTES_PER_CULLED
             + requests.len() * BYTES_PER_REQUEST
