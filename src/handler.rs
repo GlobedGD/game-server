@@ -11,6 +11,7 @@ use const_default::ConstDefault;
 use dashmap::DashMap;
 use parking_lot::RwLockWriteGuard;
 use qunet::{
+    buffers::BufPool,
     message::MsgData,
     server::{
         Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
@@ -113,7 +114,25 @@ impl AppHandler for ConnectionHandler {
         server
             .schedule(status_intv, |server| async move {
                 server.print_server_status();
-                // TODO (low): shrink server buffer pool here to reclaim memory?
+
+                // do some routine cleanup
+                #[cfg(feature = "scripting")]
+                crate::scripting::run_cleanup();
+            })
+            .await;
+
+        // TODO: determine if this is really worth it?
+        server
+            .schedule(Duration::from_hours(12), |server| async move {
+                let pool = server.get_buffer_pool();
+                let prev_usage = pool.stats().total_heap_usage;
+                pool.shrink();
+                let new_usage = pool.stats().total_heap_usage;
+
+                info!(
+                    "Shrinking buffer pool to reclaim memory: {} -> {} bytes",
+                    prev_usage, new_usage
+                );
             })
             .await;
 
