@@ -1,14 +1,20 @@
+#[cfg(feature = "scripting")]
+use std::sync::OnceLock;
 use std::{collections::VecDeque, sync::Arc};
 
 use dashmap::DashMap;
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use rustc_hash::FxHashMap;
 use server_shared::SessionId;
+use thiserror::Error;
 use tracing::error;
 
-#[cfg(feature = "scripting")]
-use crate::scripting::ScriptManager;
 use crate::{event::Event, player_state::PlayerState, trigger_manager::TriggerManager};
+#[cfg(feature = "scripting")]
+use crate::{
+    handler::BorrowedLevelScript,
+    scripting::{LuaCompilerError, ScriptManager},
+};
 
 pub struct SessionManager {
     sessions: DashMap<u64, Arc<GameSession>>,
@@ -19,13 +25,27 @@ impl SessionManager {
         Self { sessions: DashMap::new() }
     }
 
-    pub fn get_or_create_session(&self, session_id: u64) -> Arc<GameSession> {
-        self.sessions.entry(session_id).or_insert_with(|| GameSession::new(session_id)).clone()
+    pub fn get_or_create_session(&self, session_id: u64, owner: i32) -> Arc<GameSession> {
+        self.sessions
+            .entry(session_id)
+            .or_insert_with(|| GameSession::new(session_id, owner))
+            .clone()
     }
 
     pub fn delete_session_if_empty(&self, session_id: u64) {
         self.sessions.remove_if(&session_id, |_, session| session.players.read().is_empty());
     }
+}
+
+#[cfg(feature = "scripting")]
+#[derive(Error, Debug)]
+pub enum ScriptingInitError {
+    #[error("Scripting already initialized for this level")]
+    AlreadyInitialized,
+    #[error("Lua compiler error: {0}")]
+    LuaError(#[from] LuaCompilerError),
+    #[error("No main script")]
+    NoMainScript,
 }
 
 #[derive(Default)]
@@ -57,47 +77,31 @@ impl GamePlayerState {
 
 pub struct GameSession {
     id: u64,
+    owner: i32,
     players: RwLock<FxHashMap<i32, GamePlayerState>>,
     triggers: TriggerManager,
     #[cfg(feature = "scripting")]
-    scripting: Option<ScriptManager>,
+    scripting: OnceLock<ScriptManager>,
 }
 
 impl GameSession {
-    #[cfg(feature = "scripting")]
-    fn new(id: u64) -> Arc<Self> {
-        let level_id = SessionId::from(id).level_id();
-
-        Arc::new_cyclic(|data| {
-            let scripting = match ScriptManager::new_with_script(level_id, data.clone()) {
-                Ok(Some(m)) => Some(m),
-                Ok(None) => None,
-                Err(e) => {
-                    error!("failed to load script for level {level_id}: {e}");
-                    None
-                }
-            };
-
-            Self {
-                id,
-                players: RwLock::new(FxHashMap::default()),
-                triggers: TriggerManager::default(),
-                scripting,
-            }
-        })
-    }
-
-    #[cfg(not(feature = "scripting"))]
-    fn new(id: u64) -> Arc<Self> {
+    fn new(id: u64, owner: i32) -> Arc<Self> {
         Arc::new(Self {
             id,
+            owner,
             players: RwLock::new(FxHashMap::default()),
             triggers: TriggerManager::default(),
+            #[cfg(feature = "scripting")]
+            scripting: OnceLock::new(),
         })
     }
 
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    pub fn owner(&self) -> i32 {
+        self.owner
     }
 
     pub fn triggers(&self) -> &TriggerManager {
@@ -106,7 +110,29 @@ impl GameSession {
 
     #[cfg(feature = "scripting")]
     pub fn scripting(&self) -> Option<&ScriptManager> {
-        self.scripting.as_ref()
+        self.scripting.get()
+    }
+
+    #[cfg(feature = "scripting")]
+    pub fn init_scripting(
+        self: &Arc<GameSession>,
+        scripts: &[BorrowedLevelScript<'_>],
+    ) -> Result<(), ScriptingInitError> {
+        if self.scripting().is_some() {
+            return Err(ScriptingInitError::AlreadyInitialized);
+        }
+
+        let level_id = SessionId::from(self.id).level_id();
+
+        let Some(main_script) = scripts.iter().find(|x| x.main) else {
+            return Err(ScriptingInitError::NoMainScript);
+        };
+
+        let sm =
+            ScriptManager::new_with_scripts(scripts, main_script, level_id, Arc::downgrade(self))?;
+        self.scripting.set(sm).map_err(|_| ScriptingInitError::AlreadyInitialized)?;
+
+        Ok(())
     }
 
     pub fn add_player(&self, player_id: i32) {

@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::bail;
+use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use const_default::ConstDefault;
 use dashmap::DashMap;
@@ -21,7 +21,8 @@ use qunet::{
 use server_shared::{
     SessionId,
     data::{GameServerData, PlayerIconData},
-    encoding::EncodeMessageError,
+    encoding::{DataDecodeError, EncodeMessageError},
+    hmac_signer::HmacSigner,
     token_issuer::{TokenData, TokenIssuer},
 };
 use smallvec::SmallVec;
@@ -38,22 +39,31 @@ use crate::{
     session_manager::{GameSession, SessionManager},
 };
 
+struct CentralRoom {
+    pub passcode: u32,
+    pub owner: i32,
+}
+
 pub struct ConnectionHandler {
     // we use a weak handle here to avoid ref cycles, which will make it impossible to drop the server
     server: OnceLock<WeakServerHandle<Self>>,
     data: GameServerData,
     bridge: Bridge,
     token_issuer: ArcSwap<Option<TokenIssuer>>,
+    script_signer: ArcSwap<Option<HmacSigner>>,
     roles: ArcSwap<Vec<ServerRole>>,
     session_manager: SessionManager,
 
     all_clients: DashMap<i32, WeakClientStateHandle>,
-    all_rooms: DashMap<u32, u32>, // room_id -> passcode
+    all_rooms: DashMap<u32, CentralRoom>,
     tickrate: usize,
+    verify_script_signatures: bool,
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
 pub type WeakClientStateHandle = Weak<ClientState<ConnectionHandler>>;
+
+const MAX_SCRIPT_COUNT: usize = 64;
 
 #[derive(Debug, Error)]
 pub enum HandlerError {
@@ -66,6 +76,13 @@ pub enum HandlerError {
 }
 
 type HandlerResult<T> = Result<T, HandlerError>;
+
+pub struct BorrowedLevelScript<'a> {
+    pub content: &'a str,
+    pub filename: &'a str,
+    pub main: bool,
+    pub signature: [u8; 32],
+}
 
 impl AppHandler for ConnectionHandler {
     type ClientData = ClientData;
@@ -224,6 +241,12 @@ impl AppHandler for ConnectionHandler {
                 client.set_icons(icons);
                 Ok(())
             },
+
+            SendLevelScript(msg) => {
+                let scripts = decode_script_array(&msg)?;
+
+                self.handle_send_level_script(client, &scripts)
+            },
         });
 
         match result {
@@ -253,12 +276,14 @@ impl ConnectionHandler {
             server: OnceLock::new(),
             data,
             bridge,
-            token_issuer: ArcSwap::new(Arc::new(None)),
-            roles: ArcSwap::new(Arc::new(Vec::new())),
+            token_issuer: ArcSwap::default(),
+            roles: ArcSwap::default(),
+            script_signer: ArcSwap::default(),
             session_manager: SessionManager::new(),
             all_clients: DashMap::new(),
             all_rooms: DashMap::new(),
             tickrate: config.tickrate,
+            verify_script_signatures: config.verify_script_signatures,
         }
     }
 
@@ -277,15 +302,15 @@ impl ConnectionHandler {
 
     // Apis for bridge
 
-    pub fn init_token_issuer(&self, key: &str) -> anyhow::Result<()> {
-        let issuer = match TokenIssuer::new(key) {
-            Ok(x) => x,
-            Err(e) => {
-                bail!("failed to create token issuer: {}", e);
-            }
-        };
+    pub fn init_bridge_things(&self, token_key: &str, script_key: &str) -> anyhow::Result<()> {
+        let issuer = TokenIssuer::new(token_key)
+            .map_err(|e| anyhow!("failed to create token issuer: {}", e))?;
+        let signer = HmacSigner::new(script_key)
+            .map_err(|e| anyhow!("failed to create token issuer: {}", e))?;
 
         self.token_issuer.store(Arc::new(Some(issuer)));
+        self.script_signer.store(Arc::new(Some(signer)));
+
         debug!("Token issuer initialized");
 
         Ok(())
@@ -299,11 +324,12 @@ impl ConnectionHandler {
         debug!("Destroying bridge values, disconnected");
 
         self.token_issuer.store(Arc::new(None));
+        self.script_signer.store(Arc::new(None));
         self.roles.store(Arc::new(Vec::new()));
     }
 
-    pub fn add_server_room(&self, room_id: u32, passcode: u32) {
-        self.all_rooms.insert(room_id, passcode);
+    pub fn add_server_room(&self, room_id: u32, passcode: u32, owner: i32) {
+        self.all_rooms.insert(room_id, CentralRoom { passcode, owner });
     }
 
     pub fn remove_server_room(&self, room_id: u32) {
@@ -452,20 +478,25 @@ impl ConnectionHandler {
     ) -> Result<(), data::JoinSessionFailedReason> {
         // ensure that the session is for a valid room
         let room_id = session.room_id();
+        let owner;
 
         if room_id != 0 {
-            if let Some(correct_code) = self.all_rooms.get(&room_id) {
-                if *correct_code != 0 && *correct_code != passcode {
-                    debug!("incorrect passcode, expected {}, got {}", *correct_code, passcode);
+            if let Some(room) = self.all_rooms.get(&room_id) {
+                if room.passcode != 0 && room.passcode != passcode {
+                    debug!("incorrect passcode, expected {}, got {}", room.passcode, passcode);
                     return Err(data::JoinSessionFailedReason::InvalidPasscode);
                 }
+
+                owner = room.owner;
             } else {
                 debug!("no room found for session {} (room id {})", session.as_u64(), room_id);
                 return Err(data::JoinSessionFailedReason::InvalidRoom);
             }
+        } else {
+            owner = 0;
         }
 
-        let new_session = self.session_manager.get_or_create_session(session.as_u64());
+        let new_session = self.session_manager.get_or_create_session(session.as_u64(), owner);
 
         if let Some(old_session) = client.set_session(new_session.clone()) {
             self.remove_from_session(client, &old_session);
@@ -743,6 +774,67 @@ impl ConnectionHandler {
             );
         }
     }
+
+    fn handle_send_level_script(
+        &self,
+        client: &ClientStateHandle,
+        scripts: &[BorrowedLevelScript<'_>],
+    ) -> HandlerResult<()> {
+        let Some(session) = client.session() else {
+            warn!(
+                "[{} @ {}] got SendLevelScript while not in session",
+                client.account_id(),
+                client.address
+            );
+
+            return Ok(());
+        };
+
+        if client.account_id() != session.owner() {
+            debug!(
+                "[{} @ {}] got SendLevelScript from non-room owner (owner is {})",
+                client.account_id(),
+                client.address,
+                session.owner()
+            );
+
+            return Ok(());
+        }
+
+        #[cfg(feature = "scripting")]
+        {
+            // verify script signatures
+            if self.verify_script_signatures {
+                let Some(signer) = &**self.script_signer.load() else {
+                    error!("no script signer available!!");
+                    return Ok(());
+                };
+
+                for script in scripts.iter() {
+                    if !signer.validate(script.content.as_bytes(), script.signature) {
+                        warn!(
+                            "[{} @ {}] signature mismatch for script",
+                            client.account_id(),
+                            client.address
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+
+            if let Err(e) = session.init_scripting(scripts) {
+                warn!(
+                    "[{} @ {}] failed to initialize level scripts: {e}",
+                    client.account_id(),
+                    client.address
+                );
+
+                // TODO: maybe send a message to the user?
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn must_auth(client: &ClientState<ConnectionHandler>) -> HandlerResult<()> {
@@ -751,4 +843,42 @@ fn must_auth(client: &ClientState<ConnectionHandler>) -> HandlerResult<()> {
     } else {
         Err(HandlerError::Unauthorized)
     }
+}
+
+fn decode_script_array<'a>(
+    msg: &'a data::send_level_script_message::Reader,
+) -> Result<SmallVec<[BorrowedLevelScript<'a>; 8]>, DataDecodeError> {
+    let mut scripts = SmallVec::<[BorrowedLevelScript; 8]>::new();
+
+    let scrs = msg.get_scripts()?;
+    if scrs.len() > MAX_SCRIPT_COUNT as u32 {
+        // TODO: send error
+        warn!("error decoding scripts: too many scripts ({})", scrs.len());
+        return Err(DataDecodeError::ValidationFailed);
+    }
+
+    for thing in scrs.iter() {
+        let mut signature = [0u8; 32];
+        if thing.has_signature() {
+            let sig = thing.get_signature()?;
+            if sig.len() != 32 {
+                // TODO: send error
+                warn!("error decoding scripts: signature mismatch (length {})", sig.len());
+                return Err(DataDecodeError::ValidationFailed);
+            }
+
+            for (i, byte) in sig.iter().enumerate().take(32) {
+                signature[i] = byte;
+            }
+        }
+
+        scripts.push(BorrowedLevelScript {
+            filename: thing.get_filename()?.to_str()?,
+            content: thing.get_content()?.to_str()?,
+            main: thing.get_main(),
+            signature,
+        });
+    }
+
+    Ok(scripts)
 }

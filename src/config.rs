@@ -78,8 +78,14 @@ fn default_log_rolling() -> bool {
     false
 }
 
+// Stuff
+
 fn default_tickrate() -> usize {
     30
+}
+
+fn default_verify_script_signatures() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize, Validate)]
@@ -165,6 +171,8 @@ pub struct Config {
     #[serde(default = "default_tickrate")]
     #[validate(range(min = 1, max = 240))]
     pub tickrate: usize,
+    #[serde(default = "default_verify_script_signatures")]
+    pub verify_script_signatures: bool,
 }
 
 impl Default for Config {
@@ -191,6 +199,7 @@ impl Default for Config {
             log_filename: default_log_filename(),
             log_rolling: default_log_rolling(),
             tickrate: default_tickrate(),
+            verify_script_signatures: default_verify_script_signatures(),
         }
     }
 }
@@ -214,8 +223,6 @@ impl Config {
         let mut config = Self::load(&config_path)?;
         config.replace_with_env();
         config.validate()?;
-
-        
 
         Ok(config)
     }

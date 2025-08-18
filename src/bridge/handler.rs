@@ -77,7 +77,9 @@ impl EventHandler for BridgeHandler {
                 debug!("Received login confirmation from the central server");
 
                 let token_key = msg.get_token_key()?.to_str()?;
-                if let Err(e) = self.server().handler().init_token_issuer(token_key) {
+                let script_key = msg.get_script_key()?.to_str()?;
+
+                if let Err(e) = self.server().handler().init_bridge_things(token_key, script_key) {
                     error!("Failed to initialize token issuer: {e}");
                     client.disconnect();
                     return;
@@ -103,10 +105,11 @@ impl EventHandler for BridgeHandler {
             NotifyRoomCreated(msg) => {
                 let room_id = msg.get_room_id();
                 let passcode = msg.get_passcode();
+                let owner = msg.get_owner();
 
                 unpacked_data.reset(); // free up memory
 
-                self.handle_room_created(room_id, passcode, client).await;
+                self.handle_room_created(room_id, passcode, owner, client).await;
             },
 
             NotifyRoomDeleted(msg) => {
@@ -193,14 +196,20 @@ impl BridgeHandler {
         })
     }
 
-    async fn handle_room_created(&self, room_id: u32, passcode: u32, client: &Client<Self>) {
-        debug!("creating room {} with passcode {}", room_id, passcode);
+    async fn handle_room_created(
+        &self,
+        room_id: u32,
+        passcode: u32,
+        owner: i32,
+        client: &Client<Self>,
+    ) {
+        debug!("creating room {} with passcode {} (owner: {})", room_id, passcode, owner);
 
         if !self.authenticated() {
             return;
         }
 
-        self.server().handler().add_server_room(room_id, passcode);
+        self.server().handler().add_server_room(room_id, passcode, owner);
 
         // send reply
         let buf = data::encode_message!(self, 40, msg => {
