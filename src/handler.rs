@@ -7,9 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
-use const_default::ConstDefault;
 use dashmap::DashMap;
-use parking_lot::RwLockWriteGuard;
 use qunet::{
     buffers::BufPool,
     message::MsgData,
@@ -35,8 +33,8 @@ use crate::{
     client_data::ClientData,
     config::Config,
     data,
-    event::{CounterChangeEvent, CounterChangeType, Event},
-    player_state::PlayerState,
+    event::Event,
+    player_state::{CameraRange, PlayerState},
     session_manager::{GameSession, SessionManager},
 };
 
@@ -65,6 +63,7 @@ pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
 pub type WeakClientStateHandle = Weak<ClientState<ConnectionHandler>>;
 
 const MAX_SCRIPT_COUNT: usize = 64;
+pub const MAX_EVENT_COUNT: usize = 64;
 
 #[derive(Debug, Error)]
 pub enum HandlerError {
@@ -235,7 +234,7 @@ impl AppHandler for ConnectionHandler {
                     &data_requests[..(in_reqs.len().min(64u32) as usize)]
                 };
 
-                let mut events = heapless::Vec::<Event, 64>::new();
+                let mut events = SmallVec::<[Event; 8]>::new();
                 let in_evs = msg.get_events()?;
                 for ev in in_evs.iter() {
                     match Event::from_reader(ev) {
@@ -250,9 +249,11 @@ impl AppHandler for ConnectionHandler {
                     }
                 }
 
+                let camera_range = CameraRange::new(msg.get_camera_x(), msg.get_camera_y(), msg.get_camera_radius());
+
                 unpacked_data.reset(); // free up memory
 
-                self.handle_player_data(client, data, reqs, &events).await
+                self.handle_player_data(client, data, &camera_range, reqs, &events).await
             },
 
             UpdateIcons(msg) => {
@@ -552,6 +553,7 @@ impl ConnectionHandler {
         &self,
         client: &ClientStateHandle,
         data: PlayerState,
+        camera_range: &CameraRange,
         requests: &[i32],
         events: &[Event],
     ) -> HandlerResult<()> {
@@ -572,70 +574,19 @@ impl ConnectionHandler {
             self.do_handle_event(client, &session, event)?;
         }
 
-        let mut nearby_ids = SmallVec::<[i32; 256]>::new();
-        let mut culled_ids = SmallVec::<[i32; 256]>::new();
-        let mut out_events = SmallVec::<[Event; 64]>::new();
+        let mut out_events = SmallVec::<[Event; 8]>::new();
 
-        // Lock the session to update the player data and discover the amount of players nearby
-        {
-            let mut players = session.players_write_lock();
-
-            let entry = players.entry(account_id).or_default();
-            entry.state = data.clone();
-
-            // take up to 64 unread counter values
-            entry.unread_counter_values.retain(|k, v| {
-                if out_events.len() < out_events.capacity() {
-                    out_events.push(Event::CounterChange(CounterChangeEvent {
-                        item_id: *k,
-                        r#type: CounterChangeType::Set(*v),
-                    }));
-
-                    false
-                } else {
-                    true // keep the value
-                }
-            });
-
-            // and unread events!
-            while out_events.len() < out_events.capacity()
-                && let Some(ev) = entry.unread_events.pop_front()
-            {
-                out_events.push(ev);
-            }
-
-            let players = RwLockWriteGuard::downgrade(players);
-
-            for (id, _player) in players.iter() {
-                // in debug, always send the local player, helps with debugging
-                // #[cfg(not(debug_assertions))]
-                if *id == account_id {
-                    continue;
-                }
-
-                // TODO (medium): when moderation stuff is added, allow players to hide themselves
-                // probably don't hide in platformer, re-enable this when more stuff is implemented
-
-                // let should_send = data.is_near(player);
-                let should_send = true;
-
-                if should_send {
-                    nearby_ids.push(*id);
-                } else {
-                    culled_ids.push(*id);
-                }
-            }
-        }
+        session.update_player(data, &mut out_events);
 
         // TODO (high): adjust this
         const BYTES_PER_PLAYER: usize = 64;
-        const BYTES_PER_CULLED: usize = 4;
         const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67
         const BYTES_PER_EVENT: usize = 32; // TODO
 
-        let to_allocate = 96
-            + nearby_ids.len() * BYTES_PER_PLAYER
-            + culled_ids.len() * BYTES_PER_CULLED
+        let player_count = session.player_count();
+
+        let to_allocate = 88
+            + player_count * BYTES_PER_PLAYER
             + requests.len() * BYTES_PER_REQUEST
             + out_events.len() * BYTES_PER_EVENT;
 
@@ -649,29 +600,19 @@ impl ConnectionHandler {
 
         let buf = data::encode_message_heap!(self, to_allocate, msg => {
             let mut level_data = msg.reborrow().init_level_data();
+            let mut players_data = level_data.reborrow().init_players(player_count as u32);
+            let mut written_players = 0;
 
-            // encode player states of all players nearby
-            let players = session.players_read_lock();
-            let mut players_data = level_data.reborrow().init_players(nearby_ids.len() as u32);
+            session.for_every_player(|player| {
+                if written_players == player_count {
+                    return;
+                }
 
-            for (i, id) in nearby_ids.iter().enumerate() {
-                let mut p = players_data.reborrow().get(i as u32);
+                let mut p = players_data.reborrow().get(written_players as u32);
+                player.state.encode(p.reborrow(), camera_range);
 
-                // we do this small hack because there's a chance that player has left since the initial check,
-                // it's completely fine to just send default data in that case
-                let player = players.get(id).map(|x| &x.state).unwrap_or(&PlayerState::DEFAULT);
-                player.encode(p.reborrow());
-            }
-
-            drop(players);
-
-            // encode ids of culled players
-
-            let mut culled_data = level_data.reborrow().init_culled(culled_ids.len() as u32);
-
-            for (i, id) in culled_ids.iter().enumerate() {
-                culled_data.reborrow().set(i as u32, *id);
-            }
+                written_players += 1;
+            });
 
             // encode responses to player metadata requests
 
@@ -742,15 +683,7 @@ impl ConnectionHandler {
                 let (item_id, value) = session.triggers().handle_change(cc);
 
                 // go and tell all players about the change
-                let mut players = session.players_write_lock();
-                for player in players.values_mut() {
-                    if player.unread_counter_values.len() >= 1024 {
-                        // u asleep?
-                        continue;
-                    }
-
-                    player.unread_counter_values.insert(item_id, value);
-                }
+                session.notify_counter_change(item_id, value);
             }
 
             Event::TwoPlayerLinkRequest { player_id, player1 } => {

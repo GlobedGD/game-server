@@ -3,13 +3,19 @@ use std::sync::OnceLock;
 use std::{collections::VecDeque, sync::Arc};
 
 use dashmap::DashMap;
-use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
+use nohash_hasher::BuildNoHashHasher;
 use rustc_hash::FxHashMap;
 use server_shared::SessionId;
+use smallvec::SmallVec;
 use thiserror::Error;
 use tracing::error;
 
-use crate::{event::Event, player_state::PlayerState, trigger_manager::TriggerManager};
+use crate::{
+    event::{CounterChangeEvent, CounterChangeType, Event},
+    handler::MAX_EVENT_COUNT,
+    player_state::PlayerState,
+    trigger_manager::TriggerManager,
+};
 #[cfg(feature = "scripting")]
 use crate::{
     handler::BorrowedLevelScript,
@@ -33,7 +39,7 @@ impl SessionManager {
     }
 
     pub fn delete_session_if_empty(&self, session_id: u64) {
-        self.sessions.remove_if(&session_id, |_, session| session.players.read().is_empty());
+        self.sessions.remove_if(&session_id, |_, session| session.players.is_empty());
     }
 }
 
@@ -78,7 +84,7 @@ impl GamePlayerState {
 pub struct GameSession {
     id: u64,
     owner: i32,
-    players: RwLock<FxHashMap<i32, GamePlayerState>>,
+    players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
     triggers: TriggerManager,
     #[cfg(feature = "scripting")]
     scripting: OnceLock<ScriptManager>,
@@ -89,7 +95,7 @@ impl GameSession {
         Arc::new(Self {
             id,
             owner,
-            players: RwLock::new(FxHashMap::default()),
+            players: DashMap::default(),
             triggers: TriggerManager::default(),
             #[cfg(feature = "scripting")]
             scripting: OnceLock::new(),
@@ -136,35 +142,73 @@ impl GameSession {
     }
 
     pub fn add_player(&self, player_id: i32) {
-        let mut players = self.players.write();
-        players.insert(player_id, GamePlayerState::default());
+        self.players.insert(player_id, GamePlayerState::default());
     }
 
     pub fn remove_player(&self, player_id: i32) {
-        let mut players = self.players.write();
-        players.remove(&player_id);
+        self.players.remove(&player_id);
     }
 
-    pub fn players_write_lock(
-        &self,
-    ) -> RwLockWriteGuard<'_, RawRwLock, FxHashMap<i32, GamePlayerState>> {
-        self.players.write()
+    #[inline]
+    pub fn player_count(&self) -> usize {
+        self.players.len()
     }
 
-    pub fn players_read_lock(
+    #[inline]
+    pub fn update_player<const N: usize>(
         &self,
-    ) -> parking_lot::RwLockReadGuard<'_, FxHashMap<i32, GamePlayerState>> {
-        self.players.read()
+        state: PlayerState,
+        out_events: &mut SmallVec<[Event; N]>,
+    ) {
+        let mut player = self.players.entry(state.account_id).or_default();
+
+        player.state = state;
+
+        // take some counter values
+        player.unread_counter_values.retain(|k, v| {
+            if out_events.len() < MAX_EVENT_COUNT {
+                out_events.push(Event::CounterChange(CounterChangeEvent {
+                    item_id: *k,
+                    r#type: CounterChangeType::Set(*v),
+                }));
+
+                false
+            } else {
+                true // keep the value
+            }
+        });
+
+        // and unread events!
+        while out_events.len() < MAX_EVENT_COUNT
+            && let Some(ev) = player.unread_events.pop_front()
+        {
+            out_events.push(ev);
+        }
+    }
+
+    pub fn for_every_player<F: FnMut(&GamePlayerState)>(&self, mut f: F) {
+        self.players.iter().for_each(|p| f(&*p));
+    }
+
+    pub fn notify_counter_change(&self, item_id: u32, value: i32) {
+        for mut player in self.players.iter_mut() {
+            if player.unread_counter_values.len() >= 1024 {
+                // u asleep?
+                continue;
+            }
+
+            player.unread_counter_values.insert(item_id, value);
+        }
     }
 
     pub fn push_event(&self, player_id: i32, event: Event) {
-        if let Some(player) = self.players.write().get_mut(&player_id) {
+        if let Some(mut player) = self.players.get_mut(&player_id) {
             player.push_event(event);
         }
     }
 
     pub fn push_event_to_all(&self, event: Event) {
-        for player in self.players.write().values_mut() {
+        for mut player in self.players.iter_mut() {
             player.push_event(event.clone());
         }
     }

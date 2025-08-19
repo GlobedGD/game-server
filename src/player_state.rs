@@ -60,7 +60,7 @@ impl From<IconType> for PlayerIconType {
     }
 }
 
-#[derive(Debug, Clone, Default, ConstDefault)]
+#[derive(Debug, Clone, Copy, Default, ConstDefault)]
 pub struct PlayerObjectData {
     pub position: Point,
     pub rotation: f32,
@@ -126,9 +126,13 @@ impl PlayerObjectData {
         builder.set_is_rotating(self.is_rotating);
         builder.set_is_sideways(self.is_sideways);
     }
+
+    pub fn in_range(&self, camera_range: &CameraRange) -> bool {
+        self.position.distance(&camera_range.center) < camera_range.radius
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PlayerDataKind {
     Dual {
         player1: PlayerObjectData,
@@ -156,7 +160,7 @@ impl ConstDefault for PlayerDataKind {
 }
 
 /// In-level player state
-#[derive(Debug, Clone, Default, ConstDefault)]
+#[derive(Debug, Clone, Copy, Default, ConstDefault)]
 pub struct PlayerState {
     pub account_id: i32,
     pub timestamp: f32,
@@ -192,6 +196,8 @@ impl PlayerState {
 
                 PlayerDataKind::Single { player: player1 }
             }
+
+            player_data::Which::Culled(_) => Err(DataDecodeError::ValidationFailed)?,
         };
 
         Ok(Self {
@@ -210,7 +216,7 @@ impl PlayerState {
         })
     }
 
-    pub fn encode(&self, mut builder: player_data::Builder<'_>) {
+    pub fn encode(&self, mut builder: player_data::Builder<'_>, camera_range: &CameraRange) {
         builder.set_account_id(self.account_id);
         builder.set_timestamp(self.timestamp);
         builder.set_frame_number(self.frame_number);
@@ -223,22 +229,43 @@ impl PlayerState {
         builder.set_is_editor_building(self.is_editor_building);
         builder.set_is_last_death_real(self.is_last_death_real);
 
-        match &self.data_kind {
-            PlayerDataKind::Single { player } => {
-                player.encode(builder.init_single().init_player1());
-            }
+        if self.in_range(camera_range) {
+            match &self.data_kind {
+                PlayerDataKind::Single { player } => {
+                    player.encode(builder.init_single().init_player1());
+                }
 
-            PlayerDataKind::Dual { player1, player2 } => {
-                let mut dual = builder.init_dual();
-                player1.encode(dual.reborrow().init_player1());
-                player2.encode(dual.reborrow().init_player2());
+                PlayerDataKind::Dual { player1, player2 } => {
+                    let mut dual = builder.init_dual();
+                    player1.encode(dual.reborrow().init_player1());
+                    player2.encode(dual.reborrow().init_player2());
+                }
             }
+        } else {
+            builder.init_culled();
         }
     }
 
-    /// Determines if another player is "near" this one, aka this player can see the other player.
-    pub fn is_near(&self, _other: &Self) -> bool {
-        // TODO (low)
-        true
+    pub fn in_range(&self, camera_range: &CameraRange) -> bool {
+        match &self.data_kind {
+            PlayerDataKind::Single { player } => player.in_range(camera_range),
+            PlayerDataKind::Dual { player1, player2 } => {
+                player1.in_range(camera_range) || player2.in_range(camera_range)
+            }
+        }
+    }
+}
+
+pub struct CameraRange {
+    center: Point,
+    radius: f32,
+}
+
+impl CameraRange {
+    pub fn new(x: f32, y: f32, radius: f32) -> Self {
+        Self {
+            center: Point::new(x, y),
+            radius,
+        }
     }
 }
