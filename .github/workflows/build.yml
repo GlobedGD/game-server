@@ -65,26 +65,26 @@ jobs:
         shell: bash
 
       - name: Create artifacts folder
-        run: mkdir -p server/artifacts
+        run: mkdir -p artifacts
         shell: bash
 
       - name: Copy artifacts (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cp server/target/${{ matrix.target }}/release/game-server.exe server/artifacts/game-server${{ matrix.bin-suffix }} || :
+          cp target/${{ matrix.target }}/release/game-server.exe artifacts/game-server${{ matrix.bin-suffix }} || :
         shell: bash
 
       - name: Copy artifacts (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cp server/target/${{ matrix.target }}/release/game-server server/artifacts/game-server${{ matrix.bin-suffix }} || :
+          cp target/${{ matrix.target }}/release/game-server artifacts/game-server${{ matrix.bin-suffix }} || :
         shell: bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-build
-          path: server/artifacts/*
+          path: artifacts/*
 
   merge:
     name: Merge artifacts
