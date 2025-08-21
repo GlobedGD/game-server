@@ -608,6 +608,10 @@ impl ConnectionHandler {
                     return;
                 }
 
+                if player.state.account_id == account_id {
+                    return;
+                }
+
                 let mut p = players_data.reborrow().get(written_players as u32);
                 player.state.encode(p.reborrow(), camera_range);
 
