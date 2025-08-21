@@ -51,7 +51,7 @@ jobs:
       - name: Build server (native)
         if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          SERVER_SHARED_PREBUILT_DATA=1 cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: true
         shell: bash
@@ -59,7 +59,7 @@ jobs:
       - name: Build server (cross)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          cross build --release --target ${{ matrix.target }}
+          SERVER_SHARED_PREBUILT_DATA=1 cross build --release --target ${{ matrix.target }}
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: true
         shell: bash
