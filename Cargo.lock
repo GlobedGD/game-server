@@ -1384,7 +1384,7 @@ dependencies = [
 [[package]]
 name = "server-shared"
 version = "0.1.0"
-source = "git+https://github.com/GlobedGD/server-shared#8898c83#8898c834ca9394b6beab056db37a3832c6bc24b1"
+source = "git+https://github.com/GlobedGD/server-shared?rev=8898c83#8898c834ca9394b6beab056db37a3832c6bc24b1"
 dependencies = [
  "base64",
  "blake3",
