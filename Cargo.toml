@@ -15,7 +15,7 @@ parking_lot = { version = "0.12.4", features = [
 ] }
 qunet = { git = "https://github.com/dankmeme01/qunet", features = ["client"] }
 rand = "0.9.1"
-server-shared = { git = "https://github.com/GlobedGD/server-shared", features = [
+server-shared = { git = "https://github.com/GlobedGD/server-shared#8898c83", features = [
     "game",
     "srvc",
 ] }
