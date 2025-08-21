@@ -1150,6 +1150,7 @@ dependencies = [
 [[package]]
 name = "qunet"
 version = "0.1.0"
+source = "git+https://github.com/dankmeme01/qunet#51e0ce006373ebfe11404007b72952413a718986"
 dependencies = [
  "atomic_enum",
  "blake3",
@@ -1383,6 +1384,7 @@ dependencies = [
 [[package]]
 name = "server-shared"
 version = "0.1.0"
+source = "git+https://github.com/GlobedGD/server-shared#b0d1635e582826e9f9d998c3a987142c982494bf"
 dependencies = [
  "base64",
  "blake3",
