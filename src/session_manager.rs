@@ -186,6 +186,10 @@ impl GameSession {
         }
     }
 
+    pub fn get_player_state(&self, account_id: i32) -> Option<PlayerState> {
+        self.players.get(&account_id).map(|x| x.state)
+    }
+
     pub fn for_every_player<F: FnMut(&GamePlayerState)>(&self, mut f: F) {
         self.players.iter().for_each(|p| f(&*p));
     }
