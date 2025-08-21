@@ -2,3 +2,4 @@
 config.toml
 .vscode
 logs
+Cargo.lock
