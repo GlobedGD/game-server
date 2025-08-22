@@ -225,6 +225,8 @@ impl GameSession {
 
     #[cfg(feature = "scripting")]
     pub fn log_script_message(&self, msg: &str) {
+        use tracing::debug;
+
         let mut logs = self.logs.lock();
 
         if logs.len() > 2048 {
@@ -232,7 +234,11 @@ impl GameSession {
             return;
         }
 
-        logs.push_back(msg.to_owned());
+        debug!("[Scr {}] {msg}", self.id);
+
+        // TODO: time
+        let msg = format!("{msg}");
+        logs.push_back(msg);
     }
 
     #[cfg(feature = "scripting")]
