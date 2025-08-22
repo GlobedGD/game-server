@@ -239,7 +239,7 @@ impl AppHandler for ConnectionHandler {
                 for ev in in_evs.iter() {
                     match Event::from_reader(ev) {
                         Ok(event) => {
-                            let _ = events.push(event);
+                            events.push(event);
                         }
 
                         Err(e) => {
@@ -571,7 +571,9 @@ impl ConnectionHandler {
         };
 
         for event in events.iter() {
-            self.do_handle_event(client, &session, event)?;
+            if let Err(e) = self.do_handle_event(client, &session, event) {
+                warn!("[{} @ {}] failed to handle event: {e}", client.account_id(), client.address);
+            }
         }
 
         let mut out_events = SmallVec::<[Event; 8]>::new();
@@ -681,7 +683,6 @@ impl ConnectionHandler {
 
         self.emit_script_event(client, session, event);
 
-        #[allow(clippy::single_match)]
         match event {
             Event::CounterChange(cc) => {
                 let (item_id, value) = session.triggers().handle_change(cc);
@@ -705,6 +706,28 @@ impl ConnectionHandler {
                     *player_id,
                     Event::TwoPlayerUnlink { player_id: client.account_id() },
                 );
+            }
+
+            #[cfg(feature = "scripting")]
+            Event::RequestScriptLogs => {
+                if session.owner() != client.account_id() {
+                    return Ok(());
+                }
+
+                // send the logs
+                let logs = session.pop_script_logs();
+                let cap = 48usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
+
+                let buf = data::encode_message_heap!(self, cap, msg => {
+                    let msg = msg.init_script_logs();
+                    let mut out_logs = msg.init_logs(logs.len() as u32);
+
+                    for (i, log) in logs.iter().enumerate() {
+                        out_logs.set(i as u32, log);
+                    }
+                })?;
+
+                client.send_data_bufkind(buf);
             }
 
             _ => {}

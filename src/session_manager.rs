@@ -4,6 +4,8 @@ use std::{collections::VecDeque, sync::Arc};
 
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
+#[cfg(feature = "scripting")]
+use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 use server_shared::SessionId;
 use smallvec::SmallVec;
@@ -88,6 +90,8 @@ pub struct GameSession {
     triggers: TriggerManager,
     #[cfg(feature = "scripting")]
     scripting: OnceLock<ScriptManager>,
+    #[cfg(feature = "scripting")]
+    logs: Mutex<VecDeque<String>>,
 }
 
 impl GameSession {
@@ -99,6 +103,8 @@ impl GameSession {
             triggers: TriggerManager::default(),
             #[cfg(feature = "scripting")]
             scripting: OnceLock::new(),
+            #[cfg(feature = "scripting")]
+            logs: Mutex::default(),
         })
     }
 
@@ -191,7 +197,7 @@ impl GameSession {
     }
 
     pub fn for_every_player<F: FnMut(&GamePlayerState)>(&self, mut f: F) {
-        self.players.iter().for_each(|p| f(&*p));
+        self.players.iter().for_each(|p| f(&p));
     }
 
     pub fn notify_counter_change(&self, item_id: u32, value: i32) {
@@ -215,5 +221,22 @@ impl GameSession {
         for mut player in self.players.iter_mut() {
             player.push_event(event.clone());
         }
+    }
+
+    #[cfg(feature = "scripting")]
+    pub fn log_script_message(&self, msg: &str) {
+        let mut logs = self.logs.lock();
+
+        if logs.len() > 2048 {
+            tracing::warn!("Script failed to log message (too many logs in buffer): {msg}");
+            return;
+        }
+
+        logs.push_back(msg.to_owned());
+    }
+
+    #[cfg(feature = "scripting")]
+    pub fn pop_script_logs(&self) -> Vec<String> {
+        self.logs.lock().drain(0..).collect()
     }
 }

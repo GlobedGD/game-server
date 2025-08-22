@@ -12,6 +12,7 @@ pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
 
 pub const EVENT_SPAWN_GROUP: u16 = 0xf010;
 pub const EVENT_SET_ITEM: u16 = 0xf011;
+pub const EVENT_REQUEST_SCRIPT_LOGS: u16 = 0xf012;
 pub const EVENT_2P_LINK_REQUEST: u16 = 0xf100;
 pub const EVENT_2P_UNLINK: u16 = 0xf101;
 
@@ -72,6 +73,8 @@ pub enum Event {
         item_id: u32,
         value: i32,
     },
+
+    RequestScriptLogs,
 
     TwoPlayerLinkRequest {
         player_id: i32,
@@ -140,6 +143,8 @@ impl Event {
                 Ok(Event::Scripted { r#type, args })
             }
 
+            EVENT_REQUEST_SCRIPT_LOGS => Ok(Event::RequestScriptLogs),
+
             EVENT_2P_LINK_REQUEST => {
                 let data = reader.get_data()?;
                 let mut reader = ByteReader::new(data);
@@ -168,6 +173,7 @@ impl Event {
             Event::Scripted { r#type, .. } => *r#type,
             Event::SpawnGroup { .. } => EVENT_SPAWN_GROUP,
             Event::SetItem { .. } => EVENT_SET_ITEM,
+            Event::RequestScriptLogs => EVENT_REQUEST_SCRIPT_LOGS,
             Event::PlayerJoin(_) => EVENT_PLAYER_JOIN,
             Event::PlayerLeave(_) => EVENT_PLAYER_LEAVE,
             Event::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
@@ -258,6 +264,10 @@ impl Event {
                 buffer.write_varint(*value as i64)?;
 
                 writer.set_data(buffer.written());
+            }
+
+            Event::RequestScriptLogs => {
+                unimplemented!()
             }
 
             Event::PlayerJoin(player_id) => {

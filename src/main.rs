@@ -1,4 +1,4 @@
-#![feature(try_blocks, duration_constructors_lite)]
+#![feature(try_blocks, duration_constructors_lite, thread_local)]
 #![allow(clippy::new_without_default)]
 
 use std::net::IpAddr;

@@ -258,8 +258,7 @@ impl PlayerState {
     pub fn player1(&self) -> &PlayerObjectData {
         match &self.data_kind {
             PlayerDataKind::Single { player } => player,
-            PlayerDataKind::Dual { player1, player2: _ } => &player1,
-            _ => panic!("invalid data_kind in PlayerState!"),
+            PlayerDataKind::Dual { player1, player2: _ } => player1,
         }
     }
 }
