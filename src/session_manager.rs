@@ -81,6 +81,16 @@ impl GamePlayerState {
             true
         }
     }
+
+    #[inline]
+    pub fn push_counter_change(&mut self, item_id: u32, value: i32) {
+        if self.unread_counter_values.len() >= 1024 {
+            // u asleep?
+            return;
+        }
+
+        self.unread_counter_values.insert(item_id, value);
+    }
 }
 
 pub struct GameSession {
@@ -202,12 +212,16 @@ impl GameSession {
 
     pub fn notify_counter_change(&self, item_id: u32, value: i32) {
         for mut player in self.players.iter_mut() {
-            if player.unread_counter_values.len() >= 1024 {
-                // u asleep?
-                continue;
-            }
+            player.push_counter_change(item_id, value);
+        }
+    }
 
-            player.unread_counter_values.insert(item_id, value);
+    pub fn notify_counter_change_one(&self, player: i32, item_id: u32, value: i32) -> bool {
+        if let Some(mut player) = self.players.get_mut(&player) {
+            player.push_counter_change(item_id, value);
+            true
+        } else {
+            false
         }
     }
 
