@@ -785,30 +785,31 @@ impl ConnectionHandler {
             // verify script signatures
             if self.verify_script_signatures {
                 let Some(signer) = &**self.script_signer.load() else {
-                    error!("no script signer available!!");
+                    session.log_script_message("[ERROR] script signer is not available");
                     return Ok(());
                 };
 
                 for script in scripts.iter() {
                     if !signer.validate(script.content.as_bytes(), script.signature) {
+                        session.log_script_message(&format!(
+                            "[ERROR] signature mismatch for script {}",
+                            script.filename
+                        ));
+
                         warn!(
                             "[{} @ {}] signature mismatch for script",
                             client.account_id(),
                             client.address
                         );
+
                         return Ok(());
                     }
                 }
             }
 
             if let Err(e) = session.init_scripting(scripts) {
-                warn!(
-                    "[{} @ {}] failed to initialize level scripts: {e}",
-                    client.account_id(),
-                    client.address
-                );
-
-                // TODO: maybe send a message to the user?
+                session
+                    .log_script_message(&format!("[WARN] failed to initialize main script: {e}"));
             }
         }
 
