@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
+use build_time::build_time_utc;
 use dashmap::DashMap;
 use qunet::{
     buffers::BufPool,
@@ -96,7 +97,10 @@ impl AppHandler for ConnectionHandler {
             return Err(format!("failed to connect to the central server: {e}").into());
         }
 
-        info!("Globed game server is running!");
+        info!(
+            "Globed game server is running! Build date: {}",
+            build_time_utc!("%Y-%m-%dT%H:%M:%S")
+        );
         info!(
             "- Server name: {} ({}), region: {}",
             self.data.name, self.data.string_id, self.data.region
