@@ -714,8 +714,12 @@ impl ConnectionHandler {
                     return Ok(());
                 }
 
-                // send the logs
                 let logs = session.pop_script_logs();
+                if logs.is_empty() {
+                    return Ok(());
+                }
+
+                // send the logs
                 let cap = 48usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
 
                 let buf = data::encode_message_heap!(self, cap, msg => {
