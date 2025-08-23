@@ -1,6 +1,6 @@
 #[cfg(feature = "scripting")]
 use std::sync::OnceLock;
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
@@ -98,6 +98,7 @@ pub struct GameSession {
     owner: i32,
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
     triggers: TriggerManager,
+    created_at: Instant,
     #[cfg(feature = "scripting")]
     scripting: OnceLock<ScriptManager>,
     #[cfg(feature = "scripting")]
@@ -111,6 +112,7 @@ impl GameSession {
             owner,
             players: DashMap::default(),
             triggers: TriggerManager::default(),
+            created_at: Instant::now(),
             #[cfg(feature = "scripting")]
             scripting: OnceLock::new(),
             #[cfg(feature = "scripting")]
@@ -250,8 +252,9 @@ impl GameSession {
 
         debug!("[Scr {}] {msg}", self.id);
 
-        // TODO: time
-        let msg = format!("{msg}");
+        let timer = self.created_at.elapsed();
+
+        let msg = format!("{:.3} {msg}", timer.as_secs_f64());
         logs.push_back(msg);
     }
 
