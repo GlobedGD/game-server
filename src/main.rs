@@ -3,12 +3,12 @@
 
 use std::net::IpAddr;
 
+use self::tokio::io::{AsyncReadExt, AsyncWriteExt};
 use qunet::server::{
     ServerOutcome,
     builder::{MemoryUsageOptions, UdpDiscoveryMode},
 };
 use server_shared::{config::parse_addr, data::GameServerData, logging::setup_logger};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::error;
 
 use crate::{config::Config, handler::ConnectionHandler};
@@ -18,6 +18,11 @@ use tikv_jemallocator::Jemalloc;
 #[cfg(all(not(target_env = "msvc"), not(debug_assertions)))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
+
+#[cfg(not(feature = "tokio_tracing"))]
+pub use tokio;
+#[cfg(feature = "tokio_tracing")]
+pub use tokio_tracing as tokio;
 
 pub mod bridge;
 pub mod client_data;
@@ -138,7 +143,7 @@ fn make_memory_limits(usage: u32) -> MemoryUsageOptions {
 
 async fn find_my_ip_address() -> anyhow::Result<IpAddr> {
     // yeah baby
-    let mut socket = tokio::net::TcpStream::connect("4.ident.me:80").await?;
+    let mut socket = self::tokio::net::TcpStream::connect("4.ident.me:80").await?;
     socket.write_all(format!(
         "GET / HTTP/1.1\r\nHost: 4.ident.me\r\nConnection: close\r\nUser-Agent: globed-game-server/{}\r\n\r\n", env!("CARGO_PKG_VERSION")
     ).as_bytes()).await?;

@@ -188,7 +188,7 @@ impl BridgeHandler {
                 "Connection to central server failed, waiting {wait_time:?} and retrying: {err}"
             );
 
-            tokio::time::sleep(wait_time).await;
+            crate::tokio::time::sleep(wait_time).await;
 
             if let Err(e) = client.clone().connect(&self.server_url) {
                 self.on_connection_error_helper(client, e).await;

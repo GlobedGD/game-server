@@ -17,13 +17,17 @@ qunet = { git = "https://github.com/dankmeme01/qunet", rev = "7646570e", feature
     "client",
 ] }
 rand = "0.9.1"
-server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "34a99f8f", features = [
+server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "90fb6bb1", features = [
     "game",
     "srvc",
 ] }
 serde = { version = "1.0.219", features = ["derive"] }
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"], optional = true }
+tokio_tracing = { package = "tokio", version = "1.45.1", features = [
+    "full",
+    "tracing",
+], optional = true }
 toml = "0.9.2"
 tracing = "0.1.41"
 tracing-appender = { version = "0.2.3", features = ["parking_lot"] }
@@ -51,6 +55,7 @@ tikv-jemallocator = "0.5"
 capnpc = "0.21.1"
 
 [features]
-default = []
+default = ["tokio"]
 scripting = ["dep:mlua"]
 all = ["scripting"]
+tokio_tracing = ["dep:tokio_tracing", "server-shared/tokio_tracing"]
