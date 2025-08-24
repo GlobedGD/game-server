@@ -10,9 +10,13 @@ pub const EVENT_COUNTER_CHANGE: u16 = 0xf001;
 pub const EVENT_PLAYER_JOIN: u16 = 0xf002;
 pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
 
-pub const EVENT_SPAWN_GROUP: u16 = 0xf010;
-pub const EVENT_SET_ITEM: u16 = 0xf011;
-pub const EVENT_REQUEST_SCRIPT_LOGS: u16 = 0xf012;
+pub const EVENT_SCR_SPAWN_GROUP: u16 = 0xf010;
+pub const EVENT_SCR_SET_ITEM: u16 = 0xf011;
+pub const EVENT_SCR_REQUEST_SCRIPT_LOGS: u16 = 0xf012;
+pub const EVENT_SCR_MOVE_GROUP: u16 = 0xf013;
+pub const EVENT_SCR_MOVE_GROUP_ABSOLUTE: u16 = 0xf014;
+pub const EVENT_SCR_FOLLOW_PLAYER: u16 = 0xf015;
+
 pub const EVENT_2P_LINK_REQUEST: u16 = 0xf100;
 pub const EVENT_2P_UNLINK: u16 = 0xf101;
 
@@ -75,6 +79,25 @@ pub enum Event {
     },
 
     RequestScriptLogs,
+
+    MoveGroup {
+        group: u16,
+        dx: f32,
+        dy: f32,
+    },
+
+    MoveGroupAbsolute {
+        group: u16,
+        center: u16,
+        x: f32,
+        y: f32,
+    },
+
+    FollowPlayer {
+        player_id: i32,
+        group: u16,
+        enable: bool,
+    },
 
     TwoPlayerLinkRequest {
         player_id: i32,
@@ -143,7 +166,7 @@ impl Event {
                 Ok(Event::Scripted { r#type, args })
             }
 
-            EVENT_REQUEST_SCRIPT_LOGS => Ok(Event::RequestScriptLogs),
+            EVENT_SCR_REQUEST_SCRIPT_LOGS => Ok(Event::RequestScriptLogs),
 
             EVENT_2P_LINK_REQUEST => {
                 let data = reader.get_data()?;
@@ -169,13 +192,18 @@ impl Event {
 
     pub fn type_int(&self) -> u16 {
         match self {
-            Event::CounterChange(_) => EVENT_COUNTER_CHANGE,
             Event::Scripted { r#type, .. } => *r#type,
-            Event::SpawnGroup { .. } => EVENT_SPAWN_GROUP,
-            Event::SetItem { .. } => EVENT_SET_ITEM,
-            Event::RequestScriptLogs => EVENT_REQUEST_SCRIPT_LOGS,
+            Event::CounterChange(_) => EVENT_COUNTER_CHANGE,
             Event::PlayerJoin(_) => EVENT_PLAYER_JOIN,
             Event::PlayerLeave(_) => EVENT_PLAYER_LEAVE,
+
+            Event::RequestScriptLogs => EVENT_SCR_REQUEST_SCRIPT_LOGS,
+            Event::SpawnGroup { .. } => EVENT_SCR_SPAWN_GROUP,
+            Event::SetItem { .. } => EVENT_SCR_SET_ITEM,
+            Event::MoveGroup { .. } => EVENT_SCR_MOVE_GROUP,
+            Event::MoveGroupAbsolute { .. } => EVENT_SCR_MOVE_GROUP_ABSOLUTE,
+            Event::FollowPlayer { .. } => EVENT_SCR_FOLLOW_PLAYER,
+
             Event::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
             Event::TwoPlayerUnlink { .. } => EVENT_2P_UNLINK,
         }
@@ -209,12 +237,16 @@ impl Event {
                 writer.set_data(&data);
             }
 
-            Event::Scripted { r#type: _, args: _ } => {
-                // let mut data = [0u8; 128];
+            Event::PlayerJoin(player_id) => {
+                let mut data = [0u8; 4];
+                data.copy_from_slice(&player_id.to_le_bytes());
+                writer.set_data(&data);
+            }
 
-                // // encode argument types
-                // let mut type_byte = 0u8;
-                unimplemented!()
+            Event::PlayerLeave(player_id) => {
+                let mut data = [0u8; 4];
+                data.copy_from_slice(&player_id.to_le_bytes());
+                writer.set_data(&data);
             }
 
             Event::SpawnGroup(info) => {
@@ -270,16 +302,44 @@ impl Event {
                 unimplemented!()
             }
 
-            Event::PlayerJoin(player_id) => {
-                let mut data = [0u8; 4];
-                data.copy_from_slice(&player_id.to_le_bytes());
-                writer.set_data(&data);
+            &Event::MoveGroup { group, dx, dy } => {
+                let mut data = [0u8; 16];
+                let mut buffer = ByteWriter::new(&mut data);
+
+                buffer.write_varuint(group as u64)?;
+                buffer.write_f32(dx);
+                buffer.write_f32(dy);
+
+                writer.set_data(buffer.written());
+            }
+            &Event::MoveGroupAbsolute { group, center, x, y } => {
+                let mut data = [0u8; 16];
+                let mut buffer = ByteWriter::new(&mut data);
+
+                buffer.write_varuint(group as u64)?;
+                buffer.write_varuint(center as u64)?;
+                buffer.write_f32(x);
+                buffer.write_f32(y);
+
+                writer.set_data(buffer.written());
             }
 
-            Event::PlayerLeave(player_id) => {
-                let mut data = [0u8; 4];
-                data.copy_from_slice(&player_id.to_le_bytes());
-                writer.set_data(&data);
+            &Event::FollowPlayer { mut group, player_id, enable } => {
+                let mut data = [0u8; 16];
+                let mut buffer = ByteWriter::new(&mut data);
+
+                if enable {
+                    // set top bit
+                    group |= 1 << 15;
+                } else {
+                    // clear top bit
+                    group &= !(1 << 15);
+                }
+
+                buffer.write_u16(group);
+                buffer.write_i32(player_id);
+
+                writer.set_data(buffer.written());
             }
 
             Event::TwoPlayerLinkRequest { player_id, player1 } => {
@@ -296,6 +356,14 @@ impl Event {
                 let mut data = [0u8; 4];
                 data.copy_from_slice(&player_id.to_le_bytes());
                 writer.set_data(&data);
+            }
+
+            Event::Scripted { r#type: _, args: _ } => {
+                // let mut data = [0u8; 128];
+
+                // // encode argument types
+                // let mut type_byte = 0u8;
+                unimplemented!()
             }
         }
 

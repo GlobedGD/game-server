@@ -187,6 +187,8 @@ impl AppHandler for ConnectionHandler {
         client: &ClientStateHandle,
         data: MsgData<'_>,
     ) {
+        trace!(id = client.account_id(), cid = client.connection_id, "got {} bytes", data.len());
+
         let result = data::decode_message_match!(self, data, unpacked_data, {
             LoginUToken(msg) => {
                 let account_id = msg.get_account_id();

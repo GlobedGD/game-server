@@ -254,7 +254,7 @@ impl GameSession {
 
         let timer = self.created_at.elapsed();
 
-        let msg = format!("{:.3} {msg}", timer.as_secs_f64());
+        let msg = format!("[{:.3}] {msg}", timer.as_secs_f64());
         logs.push_back(msg);
     }
 
