@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::data::event;
 
-const EVENT_GLOBED_BASE: u16 = 0xf000;
+pub const EVENT_GLOBED_BASE: u16 = 0xf000;
 pub const EVENT_COUNTER_CHANGE: u16 = 0xf001;
 pub const EVENT_PLAYER_JOIN: u16 = 0xf002;
 pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
