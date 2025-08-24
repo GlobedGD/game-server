@@ -52,7 +52,7 @@ pub struct ConnectionHandler {
     token_issuer: ArcSwap<Option<TokenIssuer>>,
     script_signer: ArcSwap<Option<HmacSigner>>,
     roles: ArcSwap<Vec<ServerRole>>,
-    session_manager: SessionManager,
+    session_manager: Arc<SessionManager>,
 
     all_clients: DashMap<i32, WeakClientStateHandle>,
     all_rooms: DashMap<u32, CentralRoom>,
@@ -138,6 +138,18 @@ impl AppHandler for ConnectionHandler {
                 );
             })
             .await;
+
+        #[cfg(feature = "scripting")]
+        {
+            server
+                .schedule(
+                    Duration::from_secs_f32(1.0 / self.tickrate as f32),
+                    |server| async move {
+                        server.handler().run_script_heartbeat();
+                    },
+                )
+                .await;
+        }
 
         Ok(())
     }
@@ -305,7 +317,7 @@ impl ConnectionHandler {
             token_issuer: ArcSwap::default(),
             roles: ArcSwap::default(),
             script_signer: ArcSwap::default(),
-            session_manager: SessionManager::new(),
+            session_manager: Arc::new(SessionManager::new()),
             all_clients: DashMap::new(),
             all_rooms: DashMap::new(),
             tickrate: config.tickrate,
@@ -761,6 +773,18 @@ impl ConnectionHandler {
                 "[{}] received a scripted event with type {type} but no script is set",
                 client.address
             );
+        }
+    }
+
+    #[cfg(feature = "scripting")]
+    fn run_script_heartbeat(&self) {
+        let mut sessions = self.session_manager.lock_heartbeats();
+        for s in sessions.iter() {
+            let Some(scripting) = s.scripting() else {
+                continue;
+            };
+
+            scripting.handle_heartbeat();
         }
     }
 

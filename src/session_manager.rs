@@ -1,12 +1,17 @@
 #[cfg(feature = "scripting")]
 use std::sync::OnceLock;
-use std::{collections::VecDeque, sync::Arc, time::Instant};
+use std::{
+    collections::VecDeque,
+    hash::Hash,
+    sync::{Arc, Weak},
+    time::Instant,
+};
 
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 #[cfg(feature = "scripting")]
 use parking_lot::Mutex;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use server_shared::SessionId;
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -26,22 +31,42 @@ use crate::{
 
 pub struct SessionManager {
     sessions: DashMap<u64, Arc<GameSession>>,
+    heartbeats: Mutex<FxHashSet<Arc<GameSession>>>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
-        Self { sessions: DashMap::new() }
+        Self {
+            sessions: DashMap::new(),
+            heartbeats: Mutex::default(),
+        }
     }
 
-    pub fn get_or_create_session(&self, session_id: u64, owner: i32) -> Arc<GameSession> {
+    pub fn get_or_create_session(
+        self: &Arc<SessionManager>,
+        session_id: u64,
+        owner: i32,
+    ) -> Arc<GameSession> {
         self.sessions
             .entry(session_id)
-            .or_insert_with(|| GameSession::new(session_id, owner))
+            .or_insert_with(|| GameSession::new(session_id, owner, &self))
             .clone()
     }
 
     pub fn delete_session_if_empty(&self, session_id: u64) {
-        self.sessions.remove_if(&session_id, |_, session| session.players.is_empty());
+        if let Some((_, session)) =
+            self.sessions.remove_if(&session_id, |_, session| session.players.is_empty())
+        {
+            self.heartbeats.lock().remove(&session);
+        }
+    }
+
+    pub fn schedule_heartbeat(&self, session: &Arc<GameSession>) {
+        self.heartbeats.lock().insert(session.clone());
+    }
+
+    pub fn lock_heartbeats(&self) -> parking_lot::MutexGuard<'_, FxHashSet<Arc<GameSession>>> {
+        self.heartbeats.lock()
     }
 }
 
@@ -99,6 +124,8 @@ pub struct GameSession {
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
     triggers: TriggerManager,
     created_at: Instant,
+    manager: Weak<SessionManager>,
+
     #[cfg(feature = "scripting")]
     scripting: OnceLock<ScriptManager>,
     #[cfg(feature = "scripting")]
@@ -106,13 +133,14 @@ pub struct GameSession {
 }
 
 impl GameSession {
-    fn new(id: u64, owner: i32) -> Arc<Self> {
+    fn new(id: u64, owner: i32, manager: &Arc<SessionManager>) -> Arc<Self> {
         Arc::new(Self {
             id,
             owner,
             players: DashMap::default(),
             triggers: TriggerManager::default(),
             created_at: Instant::now(),
+            manager: Arc::downgrade(manager),
             #[cfg(feature = "scripting")]
             scripting: OnceLock::new(),
             #[cfg(feature = "scripting")]
@@ -261,5 +289,26 @@ impl GameSession {
     #[cfg(feature = "scripting")]
     pub fn pop_script_logs(&self) -> Vec<String> {
         self.logs.lock().drain(0..).collect()
+    }
+
+    #[cfg(feature = "scripting")]
+    pub fn schedule_heartbeat(self: &Arc<GameSession>) {
+        if let Some(manager) = self.manager.upgrade() {
+            manager.schedule_heartbeat(self);
+        }
+    }
+}
+
+impl PartialEq for GameSession {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for GameSession {}
+
+impl Hash for GameSession {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.id);
     }
 }
