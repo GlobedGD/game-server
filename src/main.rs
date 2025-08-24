@@ -1,5 +1,5 @@
 #![feature(try_blocks, duration_constructors_lite, thread_local)]
-#![allow(clippy::new_without_default)]
+#![allow(clippy::new_without_default, clippy::collapsible_if)]
 
 use std::net::IpAddr;
 

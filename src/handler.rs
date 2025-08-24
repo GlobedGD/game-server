@@ -778,7 +778,8 @@ impl ConnectionHandler {
 
     #[cfg(feature = "scripting")]
     fn run_script_heartbeat(&self) {
-        let mut sessions = self.session_manager.lock_heartbeats();
+        let sessions = self.session_manager.lock_heartbeats();
+
         for s in sessions.iter() {
             let Some(scripting) = s.scripting() else {
                 continue;

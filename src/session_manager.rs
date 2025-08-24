@@ -274,7 +274,8 @@ impl GameSession {
         let mut logs = self.logs.lock();
 
         if logs.len() > 2048 {
-            tracing::warn!("Script failed to log message (too many logs in buffer): {msg}");
+            tracing::warn!("[Scr {}] Too many logs in buffer, dropping oldest", self.id);
+            logs.pop_front();
             return;
         }
 
