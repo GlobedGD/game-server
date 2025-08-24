@@ -269,17 +269,17 @@ impl GameSession {
 
     #[cfg(feature = "scripting")]
     pub fn log_script_message(&self, msg: &str) {
-        use tracing::debug;
+        use tracing::trace;
 
         let mut logs = self.logs.lock();
 
         if logs.len() > 2048 {
-            tracing::warn!("[Scr {}] Too many logs in buffer, dropping oldest", self.id);
+            tracing::trace!("[Scr {}] Too many logs in buffer, dropping oldest", self.id);
             logs.pop_front();
             return;
         }
 
-        debug!("[Scr {}] {msg}", self.id);
+        trace!("[Scr {}] {msg}", self.id);
 
         let timer = self.created_at.elapsed();
 
