@@ -737,16 +737,21 @@ impl ConnectionHandler {
                     return Ok(());
                 }
 
+                let ram_usage =
+                    session.scripting().map(|x| x.memory_usage_percent()).unwrap_or(0.0);
+
                 // send the logs
-                let cap = 48usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
+                let cap = 52usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
 
                 let buf = data::encode_message_heap!(self, cap, msg => {
-                    let msg = msg.init_script_logs();
-                    let mut out_logs = msg.init_logs(logs.len() as u32);
+                    let mut msg = msg.init_script_logs();
+                    let mut out_logs = msg.reborrow().init_logs(logs.len() as u32);
 
                     for (i, log) in logs.iter().enumerate() {
                         out_logs.set(i as u32, log);
                     }
+
+                    msg.set_ram_usage(ram_usage);
                 })?;
 
                 client.send_data_bufkind(buf);
