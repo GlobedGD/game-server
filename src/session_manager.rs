@@ -15,13 +15,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use server_shared::SessionId;
 use smallvec::SmallVec;
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, trace};
 
 use crate::{
-    event::{CounterChangeEvent, CounterChangeType, Event},
-    handler::MAX_EVENT_COUNT,
-    player_state::PlayerState,
-    trigger_manager::TriggerManager,
+    events::*, handler::MAX_EVENT_COUNT, player_state::PlayerState, trigger_manager::TriggerManager,
 };
 #[cfg(feature = "scripting")]
 use crate::{
@@ -49,7 +46,7 @@ impl SessionManager {
     ) -> Arc<GameSession> {
         self.sessions
             .entry(session_id)
-            .or_insert_with(|| GameSession::new(session_id, owner, &self))
+            .or_insert_with(|| GameSession::new(session_id, owner, self))
             .clone()
     }
 
@@ -85,7 +82,7 @@ pub enum ScriptingInitError {
 pub struct GamePlayerState {
     pub state: PlayerState,
     pub unread_counter_values: FxHashMap<u32, i32>,
-    pub unread_events: VecDeque<Event>,
+    pub unread_events: VecDeque<OutEvent>,
 }
 
 impl GamePlayerState {
@@ -98,7 +95,7 @@ impl GamePlayerState {
     }
 
     #[inline]
-    pub fn push_event(&mut self, event: Event) -> bool {
+    pub fn push_event(&mut self, event: OutEvent) -> bool {
         if self.unread_events.len() >= 512 {
             false
         } else {
@@ -122,6 +119,7 @@ pub struct GameSession {
     id: u64,
     owner: i32,
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
+    player_ids: Mutex<FxHashSet<i32>>,
     triggers: TriggerManager,
     created_at: Instant,
     manager: Weak<SessionManager>,
@@ -138,6 +136,7 @@ impl GameSession {
             id,
             owner,
             players: DashMap::default(),
+            player_ids: Mutex::new(FxHashSet::default()),
             triggers: TriggerManager::default(),
             created_at: Instant::now(),
             manager: Arc::downgrade(manager),
@@ -182,17 +181,29 @@ impl GameSession {
 
         let sm =
             ScriptManager::new_with_scripts(scripts, main_script, level_id, Arc::downgrade(self))?;
+
         self.scripting.set(sm).map_err(|_| ScriptingInitError::AlreadyInitialized)?;
 
         Ok(())
     }
 
     pub fn add_player(&self, player_id: i32) {
-        self.players.insert(player_id, GamePlayerState::default());
+        self.players.insert(
+            player_id,
+            GamePlayerState {
+                state: PlayerState {
+                    account_id: player_id,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        self.player_ids.lock().insert(player_id);
     }
 
     pub fn remove_player(&self, player_id: i32) {
         self.players.remove(&player_id);
+        self.player_ids.lock().remove(&player_id);
     }
 
     #[inline]
@@ -204,7 +215,7 @@ impl GameSession {
     pub fn update_player<const N: usize>(
         &self,
         state: PlayerState,
-        out_events: &mut SmallVec<[Event; N]>,
+        out_events: &mut SmallVec<[OutEvent; N]>,
     ) {
         let mut player = self.players.entry(state.account_id).or_default();
 
@@ -213,10 +224,16 @@ impl GameSession {
         // take some counter values
         player.unread_counter_values.retain(|k, v| {
             if out_events.len() < MAX_EVENT_COUNT {
-                out_events.push(Event::CounterChange(CounterChangeEvent {
-                    item_id: *k,
-                    r#type: CounterChangeType::Set(*v),
-                }));
+                let event = if has_scripting {
+                    OutEvent::SetItem { item_id: *k, value: *v }
+                } else {
+                    OutEvent::CounterChange(CounterChangeEvent {
+                        item_id: *k,
+                        r#type: CounterChangeType::Set(*v),
+                    })
+                };
+
+                out_events.push(event);
 
                 false
             } else {
@@ -240,6 +257,10 @@ impl GameSession {
         self.players.iter().for_each(|p| f(&p));
     }
 
+    pub fn for_every_player_id<F: FnMut(i32)>(&self, mut f: F) {
+        self.player_ids.lock().iter().for_each(|p| f(*p));
+    }
+
     pub fn notify_counter_change(&self, item_id: u32, value: i32) {
         for mut player in self.players.iter_mut() {
             player.push_counter_change(item_id, value);
@@ -255,13 +276,17 @@ impl GameSession {
         }
     }
 
-    pub fn push_event(&self, player_id: i32, event: Event) {
+    pub fn push_event(&self, player_id: i32, event: OutEvent) {
+        trace!(sid = self.id, "pushed event {} to {player_id}", event.type_int());
+
         if let Some(mut player) = self.players.get_mut(&player_id) {
             player.push_event(event);
         }
     }
 
-    pub fn push_event_to_all(&self, event: Event) {
+    pub fn push_event_to_all(&self, event: OutEvent) {
+        trace!(sid = self.id, "pushed event {} to all", event.type_int());
+
         for mut player in self.players.iter_mut() {
             player.push_event(event.clone());
         }
@@ -269,17 +294,15 @@ impl GameSession {
 
     #[cfg(feature = "scripting")]
     pub fn log_script_message(&self, msg: &str) {
-        use tracing::trace;
-
         let mut logs = self.logs.lock();
 
         if logs.len() > 2048 {
-            tracing::trace!("[Scr {}] Too many logs in buffer, dropping oldest", self.id);
+            trace!(sid = self.id, "Too many logs in buffer, dropping oldest");
             logs.pop_front();
             return;
         }
 
-        trace!("[Scr {}] {msg}", self.id);
+        trace!(sid = self.id, "[Script] {msg}");
 
         let timer = self.created_at.elapsed();
 

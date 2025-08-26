@@ -1,0 +1,14 @@
+pub const EVENT_GLOBED_BASE: u16 = 0xf000;
+pub const EVENT_COUNTER_CHANGE: u16 = 0xf001;
+pub const EVENT_PLAYER_JOIN: u16 = 0xf002;
+pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
+
+pub const EVENT_SCR_SPAWN_GROUP: u16 = 0xf010;
+pub const EVENT_SCR_SET_ITEM: u16 = 0xf011;
+pub const EVENT_SCR_REQUEST_SCRIPT_LOGS: u16 = 0xf012;
+pub const EVENT_SCR_MOVE_GROUP: u16 = 0xf013;
+pub const EVENT_SCR_MOVE_GROUP_ABSOLUTE: u16 = 0xf014;
+pub const EVENT_SCR_FOLLOW_PLAYER: u16 = 0xf015;
+
+pub const EVENT_2P_LINK_REQUEST: u16 = 0xf100;
+pub const EVENT_2P_UNLINK: u16 = 0xf101;

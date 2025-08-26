@@ -28,7 +28,7 @@ pub mod bridge;
 pub mod client_data;
 pub mod config;
 pub mod data;
-pub mod event;
+pub mod events;
 pub mod handler;
 pub mod player_state;
 #[cfg(feature = "scripting")]

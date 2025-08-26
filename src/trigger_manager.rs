@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 
-use crate::event::{CounterChangeEvent, CounterChangeType};
+use crate::events::{CounterChangeEvent, CounterChangeType};
 
 #[derive(Default)]
 pub struct TriggerManager {
