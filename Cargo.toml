@@ -47,6 +47,7 @@ mlua = { version = "0.11.1", features = [
 blake3 = "1.8.2"
 nohash-hasher = "0.2.0"
 build-time = "0.1.3"
+atomic_float = "1.1.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5"
