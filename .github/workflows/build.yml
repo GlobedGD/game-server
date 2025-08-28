@@ -2,7 +2,7 @@ name: Build Globed server
 
 on:
   workflow_dispatch:
-  push:
+  # push:
 
 jobs:
   build:
