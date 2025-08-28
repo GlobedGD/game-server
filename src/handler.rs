@@ -961,8 +961,6 @@ fn decode_event_array(
 
 fn encode_event_array(events: &[OutEvent], writer: &mut ByteWriter<'_>) {
     for ev in events {
-        tracing::trace!("encoding event {:x}", ev.type_int());
-
         writer.write_u16(ev.type_int());
         if let Err(e) = ev.encode(writer) {
             warn!("failed to encode event ({}): {}", ev.type_int(), e);

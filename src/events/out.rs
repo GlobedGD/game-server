@@ -106,6 +106,7 @@ impl OutEvent {
             }
 
             Self::SpawnGroup(info) => {
+                let flags_pos = writer.pos();
                 writer.write_u8(0); // flags, set later
                 writer.write_varuint(info.group_id as u64)?;
 
@@ -126,17 +127,21 @@ impl OutEvent {
                 }
 
                 if !info.remaps.is_empty() {
-                    if info.remaps.len() > 255 {
+                    if info.remaps.len() > 510 || !info.remaps.len().is_multiple_of(2) {
                         return Err(EventEncodeError::InvalidData);
                     }
 
                     bits.set_bit(3);
-                    writer.write_u8(info.remaps.len() as u8);
+                    writer.write_u8((info.remaps.len() / 2) as u8);
 
                     for key in info.remaps.iter() {
                         writer.write_varuint(*key as u64)?;
                     }
                 }
+
+                writer.perform_at(flags_pos, |w| {
+                    w.write_u8(bits.to_bits());
+                });
             }
 
             &Self::SetItem { item_id, value } => {
