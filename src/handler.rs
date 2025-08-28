@@ -477,10 +477,7 @@ impl ConnectionHandler {
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
-        debug!(
-            "[{}] attempting to join session {} with passcode {}",
-            client.address, session_id, passcode
-        );
+        debug!(id = session_id, passcode, "[{}] joining session", client.address);
 
         let session_id = SessionId::from(session_id);
 
