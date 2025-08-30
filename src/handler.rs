@@ -90,7 +90,9 @@ impl AppHandler for ConnectionHandler {
 
     async fn on_launch(&self, server: QunetServerHandle<Self>) -> AppResult<()> {
         let _ = self.server.set(server.make_weak());
+
         self.bridge.set_server(server.make_weak());
+        self.session_manager.init_server(server.make_weak());
 
         // connect to the central server
         if let Err(e) = self.bridge.connect() {
@@ -326,10 +328,23 @@ impl ConnectionHandler {
         &self.data
     }
 
+    pub fn find_client(&self, id: i32) -> Option<ClientStateHandle> {
+        self.all_clients.get(&id).and_then(|x| x.upgrade())
+    }
+
+    pub fn find_account_data(&self, id: i32) -> Option<TokenData> {
+        self.find_client(id).and_then(|x| x.account_data().cloned())
+    }
+
     // Apis for bridge
 
-    pub fn init_bridge_things(&self, token_key: &str, script_key: &str) -> anyhow::Result<()> {
-        let issuer = TokenIssuer::new(token_key)
+    pub fn init_bridge_things(
+        &self,
+        token_key: &str,
+        token_expiry: Duration,
+        script_key: &str,
+    ) -> anyhow::Result<()> {
+        let issuer = TokenIssuer::new(token_key, token_expiry)
             .map_err(|e| anyhow!("failed to create token issuer: {}", e))?;
         let signer = HmacSigner::new(script_key)
             .map_err(|e| anyhow!("failed to create token issuer: {}", e))?;
@@ -653,7 +668,7 @@ impl ConnectionHandler {
             for (i, req) in requests.iter().enumerate() {
                 let mut p = reqs_data.reborrow().get(i as u32);
 
-                if let Some(client) = self.all_clients.get(req).and_then(|x| x.upgrade()) && let Some(adata) = client.account_data() {
+                if let Some(client) = self.find_client(*req) && let Some(adata) = client.account_data() {
                     let icons = client.icons();
                     p.set_account_id(adata.account_id);
                     p.set_user_id(adata.user_id);
@@ -680,7 +695,6 @@ impl ConnectionHandler {
 
             // encode events
             if let Some(buf) = event_buf {
-                tracing::debug!("encoded event buf len {}", buf.len());
                 level_data.reborrow().set_event_data(&buf);
             }
         })?;

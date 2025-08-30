@@ -77,9 +77,10 @@ impl EventHandler for BridgeHandler {
                 debug!("Received login confirmation from the central server");
 
                 let token_key = msg.get_token_key()?.to_str()?;
+                let token_expiry = Duration::from_secs(msg.get_token_expiry());
                 let script_key = msg.get_script_key()?.to_str()?;
 
-                if let Err(e) = self.server().handler().init_bridge_things(token_key, script_key) {
+                if let Err(e) = self.server().handler().init_bridge_things(token_key, token_expiry, script_key) {
                     error!("Failed to initialize token issuer: {e}");
                     client.disconnect();
                     return;

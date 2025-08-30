@@ -8,7 +8,7 @@ pub struct SpawnInfo {
     pub delay: f32,
     pub delay_variance: f32,
     pub ordered: bool,
-    pub remaps: SmallVec<[u32; 6]>,
+    pub remaps: SmallVec<[u16; 6]>,
 }
 
 #[non_exhaustive]
@@ -42,6 +42,13 @@ pub enum OutEvent {
         enable: bool,
     },
 
+    FollowRotation {
+        player_id: i32,
+        group: u16,
+        center: u16,
+        enable: bool,
+    },
+
     // 2 player mode
     TwoPlayerLinkRequest {
         player_id: i32,
@@ -62,6 +69,7 @@ impl OutEvent {
             Self::MoveGroup { .. } => EVENT_SCR_MOVE_GROUP,
             Self::MoveGroupAbsolute { .. } => EVENT_SCR_MOVE_GROUP_ABSOLUTE,
             Self::FollowPlayer { .. } => EVENT_SCR_FOLLOW_PLAYER,
+            Self::FollowRotation { .. } => EVENT_SCR_FOLLOW_ROTATION,
 
             Self::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
             Self::TwoPlayerUnlink { .. } => EVENT_2P_UNLINK,
@@ -76,6 +84,7 @@ impl OutEvent {
             Self::MoveGroup { .. } => 10,
             Self::MoveGroupAbsolute { .. } => 12,
             Self::FollowPlayer { .. } => 6,
+            Self::FollowRotation { .. } => 8,
 
             Self::TwoPlayerLinkRequest { .. } => 5,
             Self::TwoPlayerUnlink { .. } => 4,
@@ -172,6 +181,25 @@ impl OutEvent {
                 }
 
                 writer.write_u16(group);
+                writer.write_i32(player_id);
+            }
+
+            &Self::FollowRotation {
+                player_id,
+                mut group,
+                center,
+                enable,
+            } => {
+                if enable {
+                    // set top bit
+                    group |= 1 << 15;
+                } else {
+                    // clear top bit
+                    group &= !(1 << 15);
+                }
+
+                writer.write_u16(group);
+                writer.write_u16(center);
                 writer.write_i32(player_id);
             }
 

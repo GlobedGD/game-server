@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 #[cfg(feature = "scripting")]
 use parking_lot::Mutex;
+use qunet::server::{ServerHandle, WeakServerHandle};
 use rustc_hash::{FxHashMap, FxHashSet};
 use server_shared::SessionId;
 use smallvec::SmallVec;
@@ -18,7 +19,10 @@ use thiserror::Error;
 use tracing::{error, trace};
 
 use crate::{
-    events::*, handler::MAX_EVENT_COUNT, player_state::PlayerState, trigger_manager::TriggerManager,
+    events::*,
+    handler::{ConnectionHandler, MAX_EVENT_COUNT},
+    player_state::PlayerState,
+    trigger_manager::TriggerManager,
 };
 #[cfg(feature = "scripting")]
 use crate::{
@@ -29,6 +33,7 @@ use crate::{
 pub struct SessionManager {
     sessions: DashMap<u64, Arc<GameSession>>,
     heartbeats: Mutex<FxHashSet<Arc<GameSession>>>,
+    server: OnceLock<WeakServerHandle<ConnectionHandler>>,
 }
 
 impl SessionManager {
@@ -36,7 +41,16 @@ impl SessionManager {
         Self {
             sessions: DashMap::new(),
             heartbeats: Mutex::default(),
+            server: OnceLock::new(),
         }
+    }
+
+    pub fn init_server(&self, handle: WeakServerHandle<ConnectionHandler>) {
+        self.server.set(handle);
+    }
+
+    pub fn server(&self) -> ServerHandle<ConnectionHandler> {
+        self.server.get().expect("server not initialized").upgrade().expect("server destroyed")
     }
 
     pub fn get_or_create_session(
@@ -157,6 +171,10 @@ impl GameSession {
 
     pub fn triggers(&self) -> &TriggerManager {
         &self.triggers
+    }
+
+    pub fn manager(&self) -> Arc<SessionManager> {
+        self.manager.upgrade().expect("session manager deleted")
     }
 
     #[cfg(feature = "scripting")]
