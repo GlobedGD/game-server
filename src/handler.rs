@@ -751,15 +751,12 @@ impl ConnectionHandler {
                 }
 
                 let logs = session.pop_script_logs();
-                if logs.is_empty() {
-                    return Ok(());
-                }
 
                 let ram_usage =
                     session.scripting().map(|x| x.memory_usage_percent()).unwrap_or(0.0);
 
                 // send the logs
-                let cap = 52usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
+                let cap = 56usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
 
                 let buf = data::encode_message_heap!(self, cap, msg => {
                     let mut msg = msg.init_script_logs();
