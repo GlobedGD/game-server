@@ -46,7 +46,7 @@ impl SessionManager {
     }
 
     pub fn init_server(&self, handle: WeakServerHandle<ConnectionHandler>) {
-        self.server.set(handle);
+        let _ = self.server.set(handle);
     }
 
     pub fn server(&self) -> ServerHandle<ConnectionHandler> {
