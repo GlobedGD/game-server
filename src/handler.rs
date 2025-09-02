@@ -652,6 +652,7 @@ impl ConnectionHandler {
                     return;
                 }
 
+                // comment this for testing xd
                 if player.state.account_id == account_id {
                     return;
                 }

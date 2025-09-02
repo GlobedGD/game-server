@@ -1,4 +1,3 @@
-#[cfg(feature = "scripting")]
 use std::sync::OnceLock;
 use std::{
     collections::VecDeque,
@@ -9,7 +8,6 @@ use std::{
 
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
-#[cfg(feature = "scripting")]
 use parking_lot::Mutex;
 use qunet::server::{ServerHandle, WeakServerHandle};
 use rustc_hash::{FxHashMap, FxHashSet};

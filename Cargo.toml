@@ -13,11 +13,11 @@ parking_lot = { version = "0.12.4", features = [
     "hardware-lock-elision",
     "send_guard",
 ] }
-qunet = { git = "https://github.com/dankmeme01/qunet", rev = "1fd6eefe", features = [
+qunet = { git = "https://github.com/dankmeme01/qunet", rev = "10d10c5", features = [
     "client",
 ] }
 rand = "0.9.1"
-server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "a18dae9b", features = [
+server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "b23e52a", features = [
     "game",
     "srvc",
 ] }
