@@ -237,6 +237,11 @@ impl GameSession {
     ) {
         let mut player = self.players.entry(state.account_id).or_default();
 
+        #[cfg(feature = "scripting")]
+        let has_scripting = self.scripting.get().is_some();
+        #[cfg(not(feature = "scripting"))]
+        let has_scripting = false;
+
         player.state = state;
 
         // take some counter values
