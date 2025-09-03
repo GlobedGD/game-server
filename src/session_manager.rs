@@ -55,10 +55,11 @@ impl SessionManager {
         self: &Arc<SessionManager>,
         session_id: u64,
         owner: i32,
+        platformer: bool,
     ) -> Arc<GameSession> {
         self.sessions
             .entry(session_id)
-            .or_insert_with(|| GameSession::new(session_id, owner, self))
+            .or_insert_with(|| GameSession::new(session_id, owner, platformer, self))
             .clone()
     }
 
@@ -130,6 +131,7 @@ impl GamePlayerState {
 pub struct GameSession {
     id: u64,
     owner: i32,
+    platformer: bool,
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
     player_ids: Mutex<FxHashSet<i32>>,
     triggers: TriggerManager,
@@ -143,10 +145,11 @@ pub struct GameSession {
 }
 
 impl GameSession {
-    fn new(id: u64, owner: i32, manager: &Arc<SessionManager>) -> Arc<Self> {
+    fn new(id: u64, owner: i32, platformer: bool, manager: &Arc<SessionManager>) -> Arc<Self> {
         Arc::new(Self {
             id,
             owner,
+            platformer,
             players: DashMap::default(),
             player_ids: Mutex::new(FxHashSet::default()),
             triggers: TriggerManager::default(),
@@ -165,6 +168,10 @@ impl GameSession {
 
     pub fn owner(&self) -> i32 {
         self.owner
+    }
+
+    pub fn platformer(&self) -> bool {
+        self.platformer
     }
 
     pub fn triggers(&self) -> &TriggerManager {

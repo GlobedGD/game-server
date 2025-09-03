@@ -18,6 +18,22 @@ impl Point {
         let dy = self.y - other.y;
         (dx * dx + dy * dy).sqrt()
     }
+
+    /// Calculates angle to another point in radians, with 0 meaning right and positive means CCW rotation
+    /// Range is [0, 2pi)
+    pub fn angle_to(&self, other: &Point) -> f32 {
+        let dy = other.y - self.y;
+        let dx = other.x - self.x;
+        let mut angle = dy.atan2(dx);
+
+        if angle < 0.0 {
+            angle += std::f32::consts::TAU;
+        }
+
+        debug_assert!(angle >= 0.0 && angle < std::f32::consts::TAU);
+
+        angle
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -216,18 +232,34 @@ impl PlayerState {
         })
     }
 
-    pub fn encode(&self, mut builder: player_data::Builder<'_>, camera_range: &CameraRange) {
+    pub fn encode(
+        &self,
+        mut builder: player_data::Builder<'_>,
+        platformer: bool,
+        camera_range: &CameraRange,
+    ) {
         builder.set_account_id(self.account_id);
         builder.set_timestamp(self.timestamp);
         builder.set_frame_number(self.frame_number);
         builder.set_death_count(self.death_count);
-        builder.set_percentage(self.percentage);
         builder.set_is_dead(self.is_dead);
         builder.set_is_paused(self.is_paused);
         builder.set_is_practicing(self.is_practicing);
         builder.set_is_in_editor(self.is_in_editor);
         builder.set_is_editor_building(self.is_editor_building);
         builder.set_is_last_death_real(self.is_last_death_real);
+
+        if platformer {
+            // in platformers, the percentage field will be the angle between the center of the player's screen and that player's position
+            let angle = self.angle_to(camera_range);
+
+            // map it to a value between 0 and 65535
+            let perc = (angle / std::f32::consts::TAU * 65535.0) as u16;
+            builder.set_percentage(perc);
+        } else {
+            // in classic levels, just send over the percentage as calculated by that client
+            builder.set_percentage(self.percentage);
+        }
 
         if self.in_range(camera_range) {
             match &self.data_kind {
@@ -251,6 +283,14 @@ impl PlayerState {
             PlayerDataKind::Single { player } => player.in_range(camera_range),
             PlayerDataKind::Dual { player1, player2 } => {
                 player1.in_range(camera_range) || player2.in_range(camera_range)
+            }
+        }
+    }
+
+    pub fn angle_to(&self, camera_range: &CameraRange) -> f32 {
+        match &self.data_kind {
+            PlayerDataKind::Single { player } | PlayerDataKind::Dual { player1: player, .. } => {
+                camera_range.center.angle_to(&player.position)
             }
         }
     }

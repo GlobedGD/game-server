@@ -218,11 +218,12 @@ impl AppHandler for ConnectionHandler {
                 let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
                 let session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
+                let platformer = msg.get_platformer();
 
                 try {
                     if self.handle_login_attempt(client, account_id, token, icons).await? {
                         unpacked_data.reset(); // free up memory
-                        self.handle_join_session(client, session_id, passcode).await?;
+                        self.handle_join_session(client, session_id, passcode, platformer).await?;
                     }
                 }
             },
@@ -230,9 +231,10 @@ impl AppHandler for ConnectionHandler {
             JoinSession(msg) => {
                 let session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
+                let platformer = msg.get_platformer();
 
                 unpacked_data.reset(); // free up memory
-                self.handle_join_session(client, session_id, passcode).await
+                self.handle_join_session(client, session_id, passcode, platformer).await
             },
 
             LeaveSession(_msg) => {
@@ -489,14 +491,15 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         session_id: u64,
         passcode: u32,
+        platformer: bool,
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
-        debug!(id = session_id, passcode, "[{}] joining session", client.address);
+        debug!(id = session_id, passcode, platformer, "[{}] joining session", client.address);
 
         let session_id = SessionId::from(session_id);
 
-        if let Err(e) = self.do_join_session(client, session_id, passcode) {
+        if let Err(e) = self.do_join_session(client, session_id, passcode, platformer) {
             let buf = data::encode_message!(self, 32, msg => {
                 let mut join_failed = msg.reborrow().init_join_session_failed();
                 join_failed.set_reason(e);
@@ -513,6 +516,7 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         session: SessionId,
         passcode: u32,
+        platformer: bool,
     ) -> Result<(), data::JoinSessionFailedReason> {
         // ensure that the session is for a valid room
         let room_id = session.room_id();
@@ -534,7 +538,8 @@ impl ConnectionHandler {
             owner = 0;
         }
 
-        let new_session = self.session_manager.get_or_create_session(session.as_u64(), owner);
+        let new_session =
+            self.session_manager.get_or_create_session(session.as_u64(), owner, platformer);
 
         if let Some(old_session) = client.set_session(new_session.clone()) {
             self.remove_from_session(client, &old_session);
@@ -642,6 +647,8 @@ impl ConnectionHandler {
             None
         };
 
+        let platformer = session.platformer();
+
         let buf = data::encode_message_heap!(self, to_allocate, msg => {
             let mut level_data = msg.reborrow().init_level_data();
             let mut players_data = level_data.reborrow().init_players(player_count as u32);
@@ -658,7 +665,7 @@ impl ConnectionHandler {
                 }
 
                 let mut p = players_data.reborrow().get(written_players as u32);
-                player.state.encode(p.reborrow(), camera_range);
+                player.state.encode(p.reborrow(), platformer, camera_range);
 
                 written_players += 1;
             });
