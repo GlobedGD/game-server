@@ -116,41 +116,32 @@ impl AppHandler for ConnectionHandler {
             Duration::from_mins(60)
         };
 
-        server
-            .schedule(status_intv, |server| async move {
-                server.print_server_status();
+        server.schedule(status_intv, |server| async move {
+            server.print_server_status();
 
-                // do some routine cleanup
-                #[cfg(feature = "scripting")]
-                crate::scripting::run_cleanup();
-            })
-            .await;
+            // do some routine cleanup
+            #[cfg(feature = "scripting")]
+            crate::scripting::run_cleanup();
+        });
 
         // TODO: determine if this is really worth it?
-        server
-            .schedule(Duration::from_hours(12), |server| async move {
-                let pool = server.get_buffer_pool();
-                let prev_usage = pool.stats().total_heap_usage;
-                pool.shrink();
-                let new_usage = pool.stats().total_heap_usage;
+        server.schedule(Duration::from_hours(12), |server| async move {
+            let pool = server.get_buffer_pool();
+            let prev_usage = pool.stats().total_heap_usage;
+            pool.shrink();
+            let new_usage = pool.stats().total_heap_usage;
 
-                info!(
-                    "Shrinking buffer pool to reclaim memory: {} -> {} bytes",
-                    prev_usage, new_usage
-                );
-            })
-            .await;
+            info!("Shrinking buffer pool to reclaim memory: {} -> {} bytes", prev_usage, new_usage);
+        });
 
         #[cfg(feature = "scripting")]
         {
-            server
-                .schedule(
-                    Duration::from_secs_f32(1.0 / self.tickrate as f32),
-                    |server| async move {
-                        server.handler().run_script_heartbeat();
-                    },
-                )
-                .await;
+            server.schedule(
+                Duration::from_secs_f32(1.0 / self.tickrate as f32),
+                |server| async move {
+                    server.handler().run_script_heartbeat();
+                },
+            );
         }
 
         Ok(())
@@ -437,7 +428,7 @@ impl ConnectionHandler {
         }
 
         // retrieve their roles
-        if let Some(roles_str) = token_data.roles_str.as_ref() {
+        let roles = if let Some(roles_str) = token_data.roles_str.as_ref() {
             let server_roles = self.roles.load();
             let mut roles = heapless::Vec::new();
 
@@ -452,10 +443,18 @@ impl ConnectionHandler {
                 }
             }
 
-            client.set_roles(roles);
+            roles
+        } else {
+            heapless::Vec::new()
+        };
 
-            // free memory held by the role string
-            token_data.roles_str = None;
+        // free memory held by the role string and colors
+        let name_color = token_data.name_color.take();
+        token_data.roles_str = None;
+
+        // set roles and name color
+        if !roles.is_empty() || name_color.is_some() {
+            client.set_special_data(roles, name_color);
         }
 
         client.set_account_data(token_data);
@@ -649,6 +648,8 @@ impl ConnectionHandler {
 
         let platformer = session.platformer();
 
+        let mut color_buf = [0u8; 256];
+
         let buf = data::encode_message_heap!(self, to_allocate, msg => {
             let mut level_data = msg.reborrow().init_level_data();
             let mut players_data = level_data.reborrow().init_players(player_count as u32);
@@ -683,18 +684,26 @@ impl ConnectionHandler {
                     p.set_username(adata.username.as_str());
                     icons.encode(p.reborrow().init_icons());
 
-                    if let Some(roles) = client.roles() {
-                        if let Err(e) = p.set_roles(roles.as_slice()) {
+                    if let Some(sud) = client.special_data() {
+                        let mut p = p.init_special_data();
+
+                        if let Err(e) = p.reborrow().set_roles(sud.roles.as_slice()) {
                             warn!(
                                 "[{}] failed to encode roles for player {}: {}",
                                 client.address, adata.account_id, e
                             );
 
-                            p.init_roles(0);
+                            p.reborrow().init_roles(0);
                         }
-                    } else {
-                        p.init_roles(0);
+
+                        if let Some(color) = sud.name_color.as_ref() {
+                            let mut writer = ByteWriter::new(&mut color_buf);
+                            color.encode(&mut writer);
+                            p.reborrow().set_name_color(writer.written());
+                        }
+
                     }
+
                 } else {
                     debug!("Player data not found for account ID {}", req);
                     p.set_account_id(0);

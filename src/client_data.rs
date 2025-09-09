@@ -4,9 +4,15 @@ use std::sync::{
 };
 
 use parking_lot::Mutex;
-use server_shared::{data::PlayerIconData, token_issuer::TokenData};
+use server_shared::{MultiColor, data::PlayerIconData, token_issuer::TokenData};
 
 use crate::session_manager::GameSession;
+
+#[derive(Debug)]
+pub struct SpecialUserData {
+    pub roles: heapless::Vec<u8, 64>,
+    pub name_color: Option<MultiColor>,
+}
 
 #[derive(Default)]
 pub struct ClientData {
@@ -14,7 +20,7 @@ pub struct ClientData {
     session_id: AtomicU64,
     session: Mutex<Option<Arc<GameSession>>>,
     icons: Mutex<PlayerIconData>,
-    roles: OnceLock<heapless::Vec<u8, 64>>,
+    special_data: OnceLock<SpecialUserData>,
     deauthorized: AtomicBool,
 }
 
@@ -87,11 +93,13 @@ impl ClientData {
         *self.icons.lock()
     }
 
-    pub fn set_roles(&self, roles: heapless::Vec<u8, 64>) {
-        self.roles.set(roles).expect("attempting to set user roles twice");
+    pub fn set_special_data(&self, roles: heapless::Vec<u8, 64>, name_color: Option<MultiColor>) {
+        self.special_data
+            .set(SpecialUserData { roles, name_color })
+            .expect("attempting to set user roles twice");
     }
 
-    pub fn roles(&self) -> Option<&heapless::Vec<u8, 64>> {
-        self.roles.get()
+    pub fn special_data(&self) -> Option<&SpecialUserData> {
+        self.special_data.get()
     }
 }
