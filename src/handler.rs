@@ -46,7 +46,7 @@ struct CentralRoom {
 
 #[derive(Clone, Debug)]
 struct CachedUserData {
-    pub muted: bool,
+    pub can_use_voice: bool,
     pub accessed_at: Instant,
 }
 
@@ -386,15 +386,15 @@ impl ConnectionHandler {
         self.user_cache.get(&account_id).map(|x| x.clone())
     }
 
-    pub fn add_user_data_cache(&self, account_id: i32, muted: bool) {
+    pub fn add_user_data_cache(&self, account_id: i32, can_use_voice: bool) {
         let now = Instant::now();
 
-        let mut entry = self
-            .user_cache
-            .entry(account_id)
-            .or_insert_with(|| CachedUserData { muted: false, accessed_at: now });
+        let mut entry = self.user_cache.entry(account_id).or_insert_with(|| CachedUserData {
+            can_use_voice: false,
+            accessed_at: now,
+        });
 
-        entry.muted = muted;
+        entry.can_use_voice = can_use_voice;
         entry.accessed_at = now;
     }
 

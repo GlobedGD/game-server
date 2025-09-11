@@ -123,11 +123,11 @@ impl EventHandler for BridgeHandler {
 
             NotifyUserData(msg) => {
                 let account_id = msg.get_account_id();
-                let muted = msg.get_muted();
+                let can_use_voice = msg.get_can_use_voice();
 
                 unpacked_data.reset();
 
-                self.handle_notify_user_data(account_id, muted).await;
+                self.handle_notify_user_data(account_id, can_use_voice).await;
             },
         });
 
@@ -241,7 +241,7 @@ impl BridgeHandler {
         self.server().handler().remove_server_room(room_id);
     }
 
-    async fn handle_notify_user_data(&self, account_id: i32, muted: bool) {
-        self.server().handler().add_user_data_cache(account_id, muted);
+    async fn handle_notify_user_data(&self, account_id: i32, can_use_voice: bool) {
+        self.server().handler().add_user_data_cache(account_id, can_use_voice);
     }
 }
