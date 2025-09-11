@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     net::SocketAddr,
     sync::{Arc, OnceLock, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::anyhow;
@@ -44,6 +44,12 @@ struct CentralRoom {
     pub owner: i32,
 }
 
+#[derive(Clone, Debug)]
+struct CachedUserData {
+    pub muted: bool,
+    pub accessed_at: Instant,
+}
+
 pub struct ConnectionHandler {
     // we use a weak handle here to avoid ref cycles, which will make it impossible to drop the server
     server: OnceLock<WeakServerHandle<Self>>,
@@ -56,6 +62,8 @@ pub struct ConnectionHandler {
 
     all_clients: DashMap<i32, WeakClientStateHandle>,
     all_rooms: DashMap<u32, CentralRoom>,
+    user_cache: DashMap<i32, CachedUserData>,
+
     tickrate: usize,
     verify_script_signatures: bool,
 }
@@ -124,14 +132,16 @@ impl AppHandler for ConnectionHandler {
             crate::scripting::run_cleanup();
         });
 
-        // TODO: determine if this is really worth it?
         server.schedule(Duration::from_hours(12), |server| async move {
+            // TODO: determine if this is really worth it?
             let pool = server.get_buffer_pool();
             let prev_usage = pool.stats().total_heap_usage;
             pool.shrink();
             let new_usage = pool.stats().total_heap_usage;
 
             info!("Shrinking buffer pool to reclaim memory: {} -> {} bytes", prev_usage, new_usage);
+
+            self.cleanup_user_data_cache();
         });
 
         #[cfg(feature = "scripting")]
@@ -183,6 +193,7 @@ impl AppHandler for ConnectionHandler {
             self.all_clients.remove_if(&account_id, |_, current_client| {
                 Weak::ptr_eq(current_client, &Arc::downgrade(client))
             });
+            self.delete_from_user_data_cache(account_id);
         }
     }
 
@@ -303,6 +314,7 @@ impl ConnectionHandler {
             session_manager: Arc::new(SessionManager::new()),
             all_clients: DashMap::new(),
             all_rooms: DashMap::new(),
+            user_cache: DashMap::new(),
             tickrate: config.tickrate,
             verify_script_signatures: config.verify_script_signatures,
         }
@@ -368,6 +380,37 @@ impl ConnectionHandler {
 
     pub fn remove_server_room(&self, room_id: u32) {
         self.all_rooms.remove(&room_id);
+    }
+
+    pub fn get_cached_user(&self, account_id: i32) -> Option<CachedUserData> {
+        self.user_cache.get(&account_id).map(|x| x.clone())
+    }
+
+    pub fn add_user_data_cache(&self, account_id: i32, muted: bool) {
+        let now = Instant::now();
+
+        let mut entry = self
+            .user_cache
+            .entry(account_id)
+            .or_insert_with(|| CachedUserData { muted: false, accessed_at: now });
+
+        entry.muted = muted;
+        entry.accessed_at = now;
+    }
+
+    pub fn delete_from_user_data_cache(&self, account_id: i32) {
+        self.user_cache.remove(&account_id);
+    }
+
+    pub fn cleanup_user_data_cache(&self) {
+        self.user_cache.retain(|id, entry| {
+            let elapsed = entry.accessed_at.elapsed();
+            if elapsed > Duration::from_hours(1) {
+                self.all_clients.contains_key(id)
+            } else {
+                true
+            }
+        });
     }
 
     // Client api

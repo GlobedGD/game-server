@@ -120,6 +120,15 @@ impl EventHandler for BridgeHandler {
 
                 self.handle_room_deleted(room_id).await;
             },
+
+            NotifyUserData(msg) => {
+                let account_id = msg.get_account_id();
+                let muted = msg.get_muted();
+
+                unpacked_data.reset();
+
+                self.handle_notify_user_data(account_id, muted).await;
+            },
         });
 
         if let Err(e) = result {
@@ -230,5 +239,9 @@ impl BridgeHandler {
         }
 
         self.server().handler().remove_server_room(room_id);
+    }
+
+    async fn handle_notify_user_data(&self, account_id: i32, muted: bool) {
+        self.server().handler().add_user_data_cache(account_id, muted);
     }
 }
