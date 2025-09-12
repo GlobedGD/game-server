@@ -141,7 +141,7 @@ impl AppHandler for ConnectionHandler {
 
             info!("Shrinking buffer pool to reclaim memory: {} -> {} bytes", prev_usage, new_usage);
 
-            self.cleanup_user_data_cache();
+            server.handler().cleanup_user_data_cache();
         });
 
         #[cfg(feature = "scripting")]
