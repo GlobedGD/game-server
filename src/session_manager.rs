@@ -91,11 +91,17 @@ pub enum ScriptingInitError {
     NoMainScript,
 }
 
+struct UnreadValue {
+    value: i32,
+    prio: usize,
+}
+
 #[derive(Default)]
 pub struct GamePlayerState {
     pub state: PlayerState,
-    pub unread_counter_values: FxHashMap<u32, i32>,
+    pub unread_counter_values: FxHashMap<u32, UnreadValue>,
     pub unread_events: VecDeque<OutEvent>,
+    pub prio_counter: usize,
 }
 
 impl GamePlayerState {
@@ -104,6 +110,7 @@ impl GamePlayerState {
             state,
             unread_counter_values: FxHashMap::default(),
             unread_events: VecDeque::new(),
+            prio_counter: 0,
         }
     }
 
@@ -124,7 +131,23 @@ impl GamePlayerState {
             return;
         }
 
-        self.unread_counter_values.insert(item_id, value);
+        self.prio_counter = self.prio_counter.wrapping_add(1);
+        self.unread_counter_values.insert(item_id, UnreadValue { value, prio: self.prio_counter });
+    }
+
+    pub fn pop_counter_changes(&mut self, limit: usize) -> SmallVec<[(u32, i32, usize); 8]> {
+        let mut out = SmallVec::new();
+
+        self.unread_counter_values.retain(|key, v| {
+            if out.len() < limit {
+                out.push((*key, v.value, v.prio));
+                false
+            } else {
+                true
+            }
+        });
+
+        out
     }
 }
 
@@ -250,24 +273,22 @@ impl GameSession {
         player.state = state;
 
         // take some counter values
-        player.unread_counter_values.retain(|k, v| {
-            if out_events.len() < MAX_EVENT_COUNT {
-                let event = if has_scripting {
-                    OutEvent::SetItem { item_id: *k, value: *v }
+        let max_counter_values = MAX_EVENT_COUNT.saturating_sub(out_events.len());
+        if max_counter_values != 0 && !player.unread_counter_values.is_empty() {
+            let mut changes = player.pop_counter_changes(max_counter_values);
+            changes.sort_by_key(|x| x.2); // sort by prio, items that were changed first are sent first
+
+            out_events.extend(changes.iter().map(|(id, val, prio)| {
+                if has_scripting {
+                    OutEvent::SetItem { item_id: *id, value: *val }
                 } else {
                     OutEvent::CounterChange(CounterChangeEvent {
-                        item_id: *k,
-                        r#type: CounterChangeType::Set(*v),
+                        item_id: *id,
+                        r#type: CounterChangeType::Set(*val),
                     })
-                };
-
-                out_events.push(event);
-
-                false
-            } else {
-                true // keep the value
-            }
-        });
+                }
+            }));
+        }
 
         // and unread events!
         while out_events.len() < MAX_EVENT_COUNT
