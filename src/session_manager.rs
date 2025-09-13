@@ -156,6 +156,7 @@ pub struct GameSession {
     owner: i32,
     platformer: bool,
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
+    counters: DashMap<u32, i32, BuildNoHashHasher<u32>>,
     player_ids: Mutex<FxHashSet<i32>>,
     triggers: TriggerManager,
     created_at: Instant,
@@ -174,6 +175,7 @@ impl GameSession {
             owner,
             platformer,
             players: DashMap::default(),
+            counters: DashMap::default(),
             player_ids: Mutex::new(FxHashSet::default()),
             triggers: TriggerManager::default(),
             created_at: Instant::now(),
@@ -234,16 +236,19 @@ impl GameSession {
     }
 
     pub fn add_player(&self, player_id: i32) {
-        self.players.insert(
-            player_id,
-            GamePlayerState {
-                state: PlayerState {
-                    account_id: player_id,
-                    ..Default::default()
-                },
+        let mut state = GamePlayerState {
+            state: PlayerState {
+                account_id: player_id,
                 ..Default::default()
             },
-        );
+            ..Default::default()
+        };
+
+        for ent in self.counters.iter() {
+            state.push_counter_change(*ent.key(), *ent.value());
+        }
+
+        self.players.insert(player_id, state);
         self.player_ids.lock().insert(player_id);
     }
 
@@ -278,7 +283,7 @@ impl GameSession {
             let mut changes = player.pop_counter_changes(max_counter_values);
             changes.sort_by_key(|x| x.2); // sort by prio, items that were changed first are sent first
 
-            out_events.extend(changes.iter().map(|(id, val, prio)| {
+            out_events.extend(changes.iter().map(|(id, val, _prio)| {
                 if has_scripting {
                     OutEvent::SetItem { item_id: *id, value: *val }
                 } else {
@@ -311,6 +316,12 @@ impl GameSession {
     }
 
     pub fn notify_counter_change(&self, item_id: u32, value: i32) {
+        if value == 0 {
+            self.counters.remove(&item_id);
+        } else {
+            self.counters.insert(item_id, value);
+        }
+
         for mut player in self.players.iter_mut() {
             player.push_counter_change(item_id, value);
         }
