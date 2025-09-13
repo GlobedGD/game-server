@@ -542,7 +542,7 @@ impl ConnectionHandler {
         let session_id = SessionId::from(session_id);
 
         if let Err(e) = self.do_join_session(client, session_id, passcode, platformer) {
-            let buf = data::encode_message!(self, 32, msg => {
+            let buf = data::encode_message!(self, 48, msg => {
                 let mut join_failed = msg.reborrow().init_join_session_failed();
                 join_failed.set_reason(e);
             })?;
