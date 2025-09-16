@@ -35,6 +35,7 @@ pub mod player_state;
 pub mod scripting;
 pub mod session_manager;
 pub mod trigger_manager;
+pub mod voice_message;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

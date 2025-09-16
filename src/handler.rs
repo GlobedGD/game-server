@@ -37,6 +37,7 @@ use crate::{
     events::*,
     player_state::{CameraRange, PlayerState},
     session_manager::{GameSession, SessionManager},
+    voice_message::VoiceMessage,
 };
 
 struct CentralRoom {
@@ -279,6 +280,12 @@ impl AppHandler for ConnectionHandler {
 
                 self.handle_send_level_script(client, &scripts)
             },
+
+            VoiceData(msg) => {
+                let msg = VoiceMessage::decode(client.account_id(), msg)?;
+
+                self.handle_voice_data(client, msg)
+            }
         });
 
         match result {
@@ -388,6 +395,8 @@ impl ConnectionHandler {
 
     pub fn add_user_data_cache(&self, account_id: i32, can_use_voice: bool) {
         let now = Instant::now();
+
+        debug!("received user data ({account_id}), voice: {can_use_voice}");
 
         let mut entry = self.user_cache.entry(account_id).or_insert_with(|| CachedUserData {
             can_use_voice: false,
@@ -879,6 +888,8 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         scripts: &[BorrowedLevelScript<'_>],
     ) -> HandlerResult<()> {
+        must_auth(client)?;
+
         let Some(session) = client.session() else {
             warn!(
                 "[{} @ {}] got SendLevelScript while not in session",
@@ -937,6 +948,53 @@ impl ConnectionHandler {
                 });
             }
         }
+
+        Ok(())
+    }
+
+    fn handle_voice_data(
+        &self,
+        client: &ClientStateHandle,
+        vmsg: Arc<VoiceMessage>,
+    ) -> HandlerResult<()> {
+        must_auth(client)?;
+
+        let Some(session) = client.session() else {
+            warn!(
+                "[{} @ {}] got VoiceDataMessage while not in session",
+                client.account_id(),
+                client.address
+            );
+
+            return Ok(());
+        };
+
+        if !self.get_cached_user(client.account_id()).map(|x| x.can_use_voice).unwrap_or(false) {
+            debug!(
+                "[{} @ {}] got VoiceDataMessage but user is not allowed to use voice",
+                client.account_id(),
+                client.address
+            );
+
+            // TODO: send a message to the user telling them they are muted
+            return Ok(());
+        }
+
+        // broadcast message to everyone
+
+        let buf = Arc::new(data::encode_message_heap!(self, vmsg.encoded_len(), msg => {
+            vmsg.encode(msg.init_voice_broadcast());
+        })?);
+
+        debug!("broadcasting voice message from {} ({} bytes)", client.account_id(), buf.len());
+
+        session.for_every_player_id(|id| {
+            if id != client.account_id() {
+                if let Some(c) = self.find_client(id) {
+                    c.send_unreliable_data_bufkind(BufferKind::Reference(buf.clone()));
+                }
+            }
+        });
 
         Ok(())
     }
