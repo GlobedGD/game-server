@@ -13,3 +13,6 @@ pub const EVENT_SCR_FOLLOW_ROTATION: u16 = 0xf016;
 
 pub const EVENT_2P_LINK_REQUEST: u16 = 0xf100;
 pub const EVENT_2P_UNLINK: u16 = 0xf101;
+
+// various comm stuff
+pub const EVENT_ACTIVE_PLAYER_SWITCH: u16 = 0xf140;

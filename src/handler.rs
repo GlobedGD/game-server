@@ -655,7 +655,7 @@ impl ConnectionHandler {
         session.update_player(data, &mut out_events);
 
         // TODO (high): adjust this
-        const BYTES_PER_PLAYER: usize = 64;
+        const BYTES_PER_PLAYER: usize = 120; // this is an overshoot, for ext data
         const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67
 
         let player_count = session.player_count();
@@ -811,6 +811,10 @@ impl ConnectionHandler {
                     *player_id,
                     OutEvent::TwoPlayerUnlink { player_id: client.account_id() },
                 );
+            }
+
+            &InEvent::ActivePlayerSwitch { player_id, full_reset } => {
+                session.push_event_to_all(OutEvent::ActivePlayerSwitch { player_id, full_reset });
             }
 
             #[cfg(feature = "scripting")]

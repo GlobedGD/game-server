@@ -58,6 +58,11 @@ pub enum OutEvent {
     TwoPlayerUnlink {
         player_id: i32,
     },
+
+    ActivePlayerSwitch {
+        player_id: i32,
+        full_reset: bool,
+    },
 }
 
 impl OutEvent {
@@ -73,6 +78,7 @@ impl OutEvent {
 
             Self::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
             Self::TwoPlayerUnlink { .. } => EVENT_2P_UNLINK,
+            Self::ActivePlayerSwitch { .. } => EVENT_ACTIVE_PLAYER_SWITCH,
         }
     }
 
@@ -88,6 +94,7 @@ impl OutEvent {
 
             Self::TwoPlayerLinkRequest { .. } => 5,
             Self::TwoPlayerUnlink { .. } => 4,
+            Self::ActivePlayerSwitch { .. } => 4,
         }
     }
 
@@ -210,6 +217,13 @@ impl OutEvent {
 
             &Self::TwoPlayerUnlink { player_id } => {
                 writer.write_i32(player_id);
+            }
+
+            &Self::ActivePlayerSwitch { player_id, full_reset } => {
+                let mut player_id = player_id as u32;
+                player_id |= (full_reset as u32) << 31;
+
+                writer.write_u32(player_id);
             }
         }
 

@@ -1,6 +1,9 @@
 use crate::data::{player_data, player_object_data};
 use const_default::ConstDefault;
-use server_shared::{encoding::DataDecodeError, schema::shared::IconType};
+use server_shared::{
+    encoding::DataDecodeError,
+    schema::{game::extended_player_data, shared::IconType},
+};
 
 #[derive(Debug, Clone, Copy, Default, ConstDefault, PartialEq)]
 pub struct Point {
@@ -30,7 +33,7 @@ impl Point {
             angle += std::f32::consts::TAU;
         }
 
-        debug_assert!(angle >= 0.0 && angle < std::f32::consts::TAU);
+        debug_assert!((0.0..std::f32::consts::TAU).contains(&angle));
 
         angle
     }
@@ -77,6 +80,17 @@ impl From<IconType> for PlayerIconType {
 }
 
 #[derive(Debug, Clone, Copy, Default, ConstDefault)]
+pub struct ExtendedPlayerData {
+    pub velocity: Point,
+    pub accelerating: bool,
+    pub acceleration: f32,
+    pub fall_start_y: f32,
+    pub is_on_ground2: bool,
+    pub gravity_mod: f32,
+    pub gravity: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default, ConstDefault)]
 pub struct PlayerObjectData {
     pub position: Point,
     pub rotation: f32,
@@ -92,6 +106,57 @@ pub struct PlayerObjectData {
     pub is_falling: bool,
     pub is_rotating: bool,
     pub is_sideways: bool,
+
+    pub ext_data: Option<ExtendedPlayerData>,
+}
+
+impl ExtendedPlayerData {
+    pub fn from_reader(reader: extended_player_data::Reader<'_>) -> Result<Self, DataDecodeError> {
+        let velocity_x = reader.get_velocity_x();
+        let velocity_y = reader.get_velocity_y();
+
+        if !velocity_x.is_finite() || !velocity_y.is_finite() {
+            return Err(DataDecodeError::InvalidFloat);
+        }
+
+        let velocity = Point::new(velocity_x, velocity_y);
+
+        let accelerating = reader.get_accelerating();
+        let acceleration = reader.get_acceleration();
+        let fall_start_y = reader.get_fall_start_y();
+        let is_on_ground2 = reader.get_is_on_ground2();
+        let gravity_mod = reader.get_gravity_mod();
+        let gravity = reader.get_gravity();
+
+        if !acceleration.is_finite()
+            || !fall_start_y.is_finite()
+            || !gravity_mod.is_finite()
+            || !gravity.is_finite()
+        {
+            return Err(DataDecodeError::InvalidFloat);
+        }
+
+        Ok(Self {
+            velocity,
+            accelerating,
+            acceleration,
+            fall_start_y,
+            is_on_ground2,
+            gravity_mod,
+            gravity,
+        })
+    }
+
+    pub fn encode(&self, mut builder: extended_player_data::Builder<'_>) {
+        builder.set_velocity_x(self.velocity.x);
+        builder.set_velocity_y(self.velocity.y);
+        builder.set_accelerating(self.accelerating);
+        builder.set_acceleration(self.acceleration);
+        builder.set_fall_start_y(self.fall_start_y);
+        builder.set_is_on_ground2(self.is_on_ground2);
+        builder.set_gravity_mod(self.gravity_mod);
+        builder.set_gravity(self.gravity);
+    }
 }
 
 impl PlayerObjectData {
@@ -122,6 +187,11 @@ impl PlayerObjectData {
             is_falling: reader.get_is_falling(),
             is_rotating: reader.get_is_rotating(),
             is_sideways: reader.get_is_sideways(),
+            ext_data: if reader.has_ext_data() {
+                Some(ExtendedPlayerData::from_reader(reader.get_ext_data()?)?)
+            } else {
+                None
+            },
         })
     }
 
@@ -141,6 +211,11 @@ impl PlayerObjectData {
         builder.set_is_falling(self.is_falling);
         builder.set_is_rotating(self.is_rotating);
         builder.set_is_sideways(self.is_sideways);
+
+        if let Some(ext_data) = &self.ext_data {
+            let mut ext_builder = builder.init_ext_data();
+            ext_data.encode(ext_builder.reborrow());
+        }
     }
 
     pub fn in_range(&self, camera_range: &CameraRange) -> bool {
@@ -158,7 +233,6 @@ pub enum PlayerDataKind {
     Single {
         player: PlayerObjectData,
     },
-    // TODO (very low): more complete data for spectating
 }
 
 impl Default for PlayerDataKind {
