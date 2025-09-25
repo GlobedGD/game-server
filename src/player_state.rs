@@ -88,6 +88,7 @@ pub struct ExtendedPlayerData {
     pub is_on_ground2: bool,
     pub gravity_mod: f32,
     pub gravity: f32,
+    pub touched_pad: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, ConstDefault)]
@@ -136,6 +137,8 @@ impl ExtendedPlayerData {
             return Err(DataDecodeError::InvalidFloat);
         }
 
+        let touched_pad = reader.get_touched_pad();
+
         Ok(Self {
             velocity,
             accelerating,
@@ -144,6 +147,7 @@ impl ExtendedPlayerData {
             is_on_ground2,
             gravity_mod,
             gravity,
+            touched_pad,
         })
     }
 
@@ -156,6 +160,7 @@ impl ExtendedPlayerData {
         builder.set_is_on_ground2(self.is_on_ground2);
         builder.set_gravity_mod(self.gravity_mod);
         builder.set_gravity(self.gravity);
+        builder.set_touched_pad(self.touched_pad);
     }
 }
 
