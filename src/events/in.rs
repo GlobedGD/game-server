@@ -31,7 +31,7 @@ pub enum InEvent {
     // the doggie commission event
     ActivePlayerSwitch {
         player_id: i32,
-        full_reset: bool,
+        r#type: u8,
     },
 }
 
@@ -73,13 +73,10 @@ impl InEvent {
             }
 
             EVENT_ACTIVE_PLAYER_SWITCH => {
-                let player_id = reader.read_u32()?;
+                let player_id = reader.read_i32()?;
+                let r#type = reader.read_u8()?;
 
-                // full reset is top bit
-                let full_reset = (player_id & 0x80000000) != 0;
-                let player_id = (player_id & 0x7fffffff) as i32;
-
-                Ok(InEvent::ActivePlayerSwitch { player_id, full_reset })
+                Ok(InEvent::ActivePlayerSwitch { player_id, r#type })
             }
 
             r#type @ 0..EVENT_GLOBED_BASE => {

@@ -813,8 +813,8 @@ impl ConnectionHandler {
                 );
             }
 
-            &InEvent::ActivePlayerSwitch { player_id, full_reset } => {
-                session.push_event_to_all(OutEvent::ActivePlayerSwitch { player_id, full_reset });
+            &InEvent::ActivePlayerSwitch { player_id, r#type } => {
+                session.push_event_to_all(OutEvent::ActivePlayerSwitch { player_id, r#type });
             }
 
             #[cfg(feature = "scripting")]
