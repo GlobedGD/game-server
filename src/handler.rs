@@ -973,14 +973,19 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        if !self.get_cached_user(client.account_id()).map(|x| x.can_use_voice).unwrap_or(false) {
+        if !self.get_cached_user(client.account_id()).map_or(false, |x| x.can_use_voice) {
             debug!(
                 "[{} @ {}] got VoiceDataMessage but user is not allowed to use voice",
                 client.account_id(),
                 client.address
             );
 
-            // TODO: send a message to the user telling them they are muted
+            // send a message to the user telling them they are muted
+            let buf = data::encode_message!(self, 48, msg => {
+                msg.reborrow().init_chat_not_permitted();
+            })?;
+            client.send_data_bufkind(buf);
+
             return Ok(());
         }
 
