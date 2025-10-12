@@ -124,10 +124,11 @@ impl EventHandler for BridgeHandler {
             NotifyUserData(msg) => {
                 let account_id = msg.get_account_id();
                 let can_use_voice = msg.get_can_use_voice();
+                let banned = msg.get_is_banned();
 
                 unpacked_data.reset();
 
-                self.handle_notify_user_data(account_id, can_use_voice).await;
+                self.handle_notify_user_data(account_id, can_use_voice, banned).await;
             },
         });
 
@@ -241,7 +242,16 @@ impl BridgeHandler {
         self.server().handler().remove_server_room(room_id);
     }
 
-    async fn handle_notify_user_data(&self, account_id: i32, can_use_voice: bool) {
-        self.server().handler().add_user_data_cache(account_id, can_use_voice);
+    async fn handle_notify_user_data(&self, account_id: i32, can_use_voice: bool, banned: bool) {
+        let server = self.server();
+        let handler = server.handler();
+
+        if banned {
+            if let Some(user) = handler.find_client(account_id) {
+                user.terminate();
+            }
+        } else {
+            handler.add_user_data_cache(account_id, can_use_voice);
+        }
     }
 }

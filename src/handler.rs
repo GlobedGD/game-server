@@ -133,14 +133,14 @@ impl AppHandler for ConnectionHandler {
             crate::scripting::run_cleanup();
         });
 
-        server.schedule(Duration::from_hours(12), |server| async move {
+        server.schedule(Duration::from_hours(6), |server| async move {
             // TODO: determine if this is really worth it?
-            let pool = server.get_buffer_pool();
-            let prev_usage = pool.stats().total_heap_usage;
-            pool.shrink();
-            let new_usage = pool.stats().total_heap_usage;
+            // let pool = server.get_buffer_pool();
+            // let prev_usage = pool.stats().total_heap_usage;
+            // pool.shrink();
+            // let new_usage = pool.stats().total_heap_usage;
 
-            info!("Shrinking buffer pool to reclaim memory: {} -> {} bytes", prev_usage, new_usage);
+            // info!("Shrinking buffer pool to reclaim memory: {} -> {} bytes", prev_usage, new_usage);
 
             server.handler().cleanup_user_data_cache();
         });
@@ -390,7 +390,15 @@ impl ConnectionHandler {
     }
 
     pub fn get_cached_user(&self, account_id: i32) -> Option<CachedUserData> {
-        self.user_cache.get(&account_id).map(|x| x.clone())
+        match self.user_cache.get_mut(&account_id) {
+            Some(ent) => {
+                let mut entry = ent;
+                entry.accessed_at = Instant::now();
+                Some(entry.clone())
+            }
+
+            None => None,
+        }
     }
 
     pub fn add_user_data_cache(&self, account_id: i32, can_use_voice: bool) {
@@ -414,7 +422,7 @@ impl ConnectionHandler {
     pub fn cleanup_user_data_cache(&self) {
         self.user_cache.retain(|id, entry| {
             let elapsed = entry.accessed_at.elapsed();
-            if elapsed > Duration::from_hours(1) {
+            if elapsed > Duration::from_hours(3) {
                 self.all_clients.contains_key(id)
             } else {
                 true
