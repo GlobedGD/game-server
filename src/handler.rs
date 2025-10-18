@@ -10,7 +10,7 @@ use arc_swap::ArcSwap;
 use build_time::build_time_utc;
 use dashmap::DashMap;
 use qunet::{
-    buffers::{BufPool, ByteReader, ByteWriter},
+    buffers::{ByteReader, ByteWriter},
     message::{BufferKind, MsgData},
     server::{
         Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
@@ -19,7 +19,7 @@ use qunet::{
     },
 };
 use server_shared::{
-    SessionId,
+    SessionId, UserSettings,
     data::{GameServerData, PlayerIconData},
     encoding::{DataDecodeError, EncodeMessageError},
     hmac_signer::HmacSigner,
@@ -207,26 +207,22 @@ impl AppHandler for ConnectionHandler {
         trace!(id = client.account_id(), cid = client.connection_id, "got {} bytes", data.len());
 
         let result = data::decode_message_match!(self, data, unpacked_data, {
-            LoginUToken(msg) => {
-                let account_id = msg.get_account_id();
-                let token = msg.get_token()?.to_str()?;
-                let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
-
-                self.handle_login_attempt(client, account_id, token, icons).await.map(|_| ())
-            },
-
-            LoginUTokenAndJoin(msg) => {
+            Login(msg) => {
                 let account_id = msg.get_account_id();
                 let token = msg.get_token()?.to_str()?;
                 let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
                 let session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
                 let platformer = msg.get_platformer();
+                let settings = UserSettings::from_reader(msg.get_settings()?);
 
                 try {
-                    if self.handle_login_attempt(client, account_id, token, icons).await? {
+                    if self.handle_login_attempt(client, account_id, token, icons, settings).await? {
                         unpacked_data.reset(); // free up memory
-                        self.handle_join_session(client, session_id, passcode, platformer).await?;
+
+                        if session_id != 0 {
+                            self.handle_join_session(client, session_id, passcode, platformer).await?;
+                        }
                     }
                 }
             },
@@ -438,6 +434,7 @@ impl ConnectionHandler {
         account_id: i32,
         token: &str,
         icons: PlayerIconData,
+        settings: UserSettings,
     ) -> HandlerResult<bool> {
         // check if already authorized
         if client.authorized() {
@@ -455,7 +452,7 @@ impl ConnectionHandler {
                 }
             };
 
-            self.on_login_success(client, token_data, icons).await?;
+            self.on_login_success(client, token_data, icons, settings).await?;
 
             Ok(true)
         } else {
@@ -469,6 +466,7 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         mut token_data: TokenData,
         icons: PlayerIconData,
+        settings: UserSettings,
     ) -> HandlerResult<()> {
         info!("[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id);
 
@@ -519,6 +517,7 @@ impl ConnectionHandler {
 
         client.set_account_data(token_data);
         client.set_icons(icons);
+        client.set_settings(settings);
 
         let buf = data::encode_message!(self, 64, msg => {
             let mut login_ok = msg.reborrow().init_login_ok();

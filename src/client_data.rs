@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use parking_lot::Mutex;
-use server_shared::{MultiColor, data::PlayerIconData, token_issuer::TokenData};
+use server_shared::{MultiColor, UserSettings, data::PlayerIconData, token_issuer::TokenData};
 
 use crate::session_manager::GameSession;
 
@@ -22,6 +22,7 @@ pub struct ClientData {
     icons: Mutex<PlayerIconData>,
     special_data: OnceLock<SpecialUserData>,
     deauthorized: AtomicBool,
+    settings: Mutex<UserSettings>,
 }
 
 impl ClientData {
@@ -85,12 +86,19 @@ impl ClientData {
     }
 
     pub fn set_icons(&self, icons: PlayerIconData) {
-        let mut lock = self.icons.lock();
-        *lock = icons;
+        *self.icons.lock() = icons;
     }
 
     pub fn icons(&self) -> PlayerIconData {
         *self.icons.lock()
+    }
+
+    pub fn set_settings(&self, settings: UserSettings) {
+        *self.settings.lock() = settings;
+    }
+
+    pub fn settings(&self) -> UserSettings {
+        *self.settings.lock()
     }
 
     pub fn set_special_data(&self, roles: heapless::Vec<u8, 64>, name_color: Option<MultiColor>) {
