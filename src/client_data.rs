@@ -21,6 +21,7 @@ pub struct ClientData {
     session: Mutex<Option<Arc<GameSession>>>,
     icons: Mutex<PlayerIconData>,
     special_data: OnceLock<SpecialUserData>,
+    is_moderator: AtomicBool,
     deauthorized: AtomicBool,
     settings: Mutex<UserSettings>,
 }
@@ -109,5 +110,13 @@ impl ClientData {
 
     pub fn special_data(&self) -> Option<&SpecialUserData> {
         self.special_data.get()
+    }
+
+    pub fn set_moderator(&self, is_mod: bool) {
+        self.is_moderator.store(is_mod, Ordering::Relaxed);
+    }
+
+    pub fn is_moderator(&self) -> bool {
+        self.is_moderator.load(Ordering::Relaxed)
     }
 }

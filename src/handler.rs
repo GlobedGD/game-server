@@ -271,6 +271,12 @@ impl AppHandler for ConnectionHandler {
                 Ok(())
             },
 
+            UpdateUserSettings(msg) => {
+                let settings = UserSettings::from_reader(msg.get_settings()?);
+                client.set_settings(settings);
+                Ok(())
+            },
+
             SendLevelScript(msg) => {
                 let scripts = decode_script_array(&msg)?;
 
@@ -510,9 +516,15 @@ impl ConnectionHandler {
         let name_color = token_data.name_color.take();
         token_data.roles_str = None;
 
+        let server_roles = self.roles.load();
+
         // set roles and name color
         if !roles.is_empty() || name_color.is_some() {
+            let moderator =
+                roles.iter().any(|r| server_roles.iter().any(|sr| sr.id == *r && sr.can_moderate));
+
             client.set_special_data(roles, name_color);
+            client.set_moderator(moderator);
         }
 
         client.set_account_data(token_data);
@@ -603,7 +615,7 @@ impl ConnectionHandler {
             self.remove_from_session(client, &old_session);
         }
 
-        new_session.add_player(client.account_id());
+        new_session.add_player(client.account_id(), client.settings().hide_in_level);
 
         self.emit_script_event(client, &new_session, &InEvent::PlayerJoin(client.account_id()));
 
@@ -705,6 +717,7 @@ impl ConnectionHandler {
             None
         };
 
+        let is_mod = client.is_moderator();
         let platformer = session.platformer();
 
         let mut color_buf = [0u8; 256];
@@ -724,6 +737,10 @@ impl ConnectionHandler {
                     return;
                 }
 
+                if player.wants_hidden && !is_mod {
+                    return;
+                }
+
                 let mut p = players_data.reborrow().get(written_players as u32);
                 player.state.encode(p.reborrow(), platformer, camera_range);
 
@@ -737,32 +754,35 @@ impl ConnectionHandler {
                 let mut p = reqs_data.reborrow().get(i as u32);
 
                 if let Some(client) = self.find_client(*req) && let Some(adata) = client.account_data() {
-                    let icons = client.icons();
-                    p.set_account_id(adata.account_id);
-                    p.set_user_id(adata.user_id);
-                    p.set_username(adata.username.as_str());
-                    icons.encode(p.reborrow().init_icons());
+                    let settings = client.settings();
+                    // don't send if they wanna be hidden and we aren't a moderator
+                    if is_mod || !settings.hide_in_level {
+                        let icons = client.icons();
+                        p.set_account_id(adata.account_id);
+                        p.set_user_id(adata.user_id);
+                        p.set_username(adata.username.as_str());
+                        icons.encode(p.reborrow().init_icons());
 
-                    if let Some(sud) = client.special_data() {
-                        let mut p = p.init_special_data();
+                        if let Some(sud) = client.special_data() && (is_mod || !settings.hide_roles) {
+                            let mut p = p.init_special_data();
 
-                        if let Err(e) = p.reborrow().set_roles(sud.roles.as_slice()) {
-                            warn!(
-                                "[{}] failed to encode roles for player {}: {}",
-                                client.address, adata.account_id, e
-                            );
+                            if let Err(e) = p.reborrow().set_roles(sud.roles.as_slice()) {
+                                warn!(
+                                    "[{}] failed to encode roles for player {}: {}",
+                                    client.address, adata.account_id, e
+                                );
 
-                            p.reborrow().init_roles(0);
+                                p.reborrow().init_roles(0);
+                            }
+
+                            if let Some(color) = sud.name_color.as_ref() {
+                                let mut writer = ByteWriter::new(&mut color_buf);
+                                color.encode(&mut writer);
+                                p.reborrow().set_name_color(writer.written());
+                            }
+
                         }
-
-                        if let Some(color) = sud.name_color.as_ref() {
-                            let mut writer = ByteWriter::new(&mut color_buf);
-                            color.encode(&mut writer);
-                            p.reborrow().set_name_color(writer.written());
-                        }
-
                     }
-
                 } else {
                     debug!("Player data not found for account ID {}", req);
                     p.set_account_id(0);

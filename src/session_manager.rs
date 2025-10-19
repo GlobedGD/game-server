@@ -102,6 +102,7 @@ pub struct GamePlayerState {
     pub unread_counter_values: FxHashMap<u32, UnreadValue>,
     pub unread_events: VecDeque<OutEvent>,
     pub prio_counter: usize,
+    pub wants_hidden: bool,
 }
 
 impl GamePlayerState {
@@ -111,6 +112,7 @@ impl GamePlayerState {
             unread_counter_values: FxHashMap::default(),
             unread_events: VecDeque::new(),
             prio_counter: 0,
+            wants_hidden: false,
         }
     }
 
@@ -235,12 +237,13 @@ impl GameSession {
         Ok(())
     }
 
-    pub fn add_player(&self, player_id: i32) {
+    pub fn add_player(&self, player_id: i32, wants_hidden: bool) {
         let mut state = GamePlayerState {
             state: PlayerState {
                 account_id: player_id,
                 ..Default::default()
             },
+            wants_hidden,
             ..Default::default()
         };
 
