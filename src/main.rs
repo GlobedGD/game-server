@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = match Config::new() {
         Ok(x) => x,
         Err(e) => {
-            error!("Failed to load configuration: {e}");
+            eprintln!("Failed to load configuration: {e}");
             return Ok(());
         }
     };
