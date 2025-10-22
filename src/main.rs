@@ -42,8 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = match Config::new() {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("Failed to load configuration: {e}");
-            std::process::exit(1);
+            error!("Failed to load configuration: {e}");
+            return Ok(());
         }
     };
 
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if config.central_server_url.is_empty() {
         error!("Central server URL is not set, please set it in the config file.");
-        std::process::exit(1);
+        return Ok(());
     }
 
     let tcp_address = config.enable_tcp.then(|| parse_addr(&config.tcp_address, "tcp_address"));
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("tcp://{ip}:{}", addr.port())
         } else {
             error!("Both TCP and UDP are disabled, server cannot launch!");
-            std::process::exit(1);
+            return Ok(());
         }
     };
 
