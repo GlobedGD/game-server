@@ -107,6 +107,7 @@ pub struct PlayerObjectData {
     pub is_falling: bool,
     pub is_rotating: bool,
     pub is_sideways: bool,
+    pub did_just_jump: bool,
 
     pub ext_data: Option<ExtendedPlayerData>,
 }
@@ -192,6 +193,7 @@ impl PlayerObjectData {
             is_falling: reader.get_is_falling(),
             is_rotating: reader.get_is_rotating(),
             is_sideways: reader.get_is_sideways(),
+            did_just_jump: reader.get_did_just_jump(),
             ext_data: if reader.has_ext_data() {
                 Some(ExtendedPlayerData::from_reader(reader.get_ext_data()?)?)
             } else {
@@ -216,6 +218,7 @@ impl PlayerObjectData {
         builder.set_is_falling(self.is_falling);
         builder.set_is_rotating(self.is_rotating);
         builder.set_is_sideways(self.is_sideways);
+        builder.set_did_just_jump(self.did_just_jump);
 
         if let Some(ext_data) = &self.ext_data {
             let mut ext_builder = builder.init_ext_data();
