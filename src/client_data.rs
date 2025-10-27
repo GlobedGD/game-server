@@ -1,9 +1,6 @@
-use std::{
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
-    time::Instant,
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use parking_lot::Mutex;
