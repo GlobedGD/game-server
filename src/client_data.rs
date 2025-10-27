@@ -28,7 +28,7 @@ pub struct ClientData {
     deauthorized: AtomicBool,
     settings: Mutex<UserSettings>,
     last_voice_msg: Mutex<OneshotRateLimiter<50>>,
-    last_quick_chat_msg: Mutex<OneshotRateLimiter<3000>>,
+    last_quick_chat_msg: Mutex<OneshotRateLimiter<2000>>,
 }
 
 impl ClientData {
