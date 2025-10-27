@@ -1,12 +1,15 @@
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 use parking_lot::Mutex;
 use server_shared::{MultiColor, UserSettings, data::PlayerIconData, token_issuer::TokenData};
 
-use crate::session_manager::GameSession;
+use crate::{oneshot_rate_limiter::OneshotRateLimiter, session_manager::GameSession};
 
 #[derive(Debug)]
 pub struct SpecialUserData {
@@ -24,6 +27,8 @@ pub struct ClientData {
     is_moderator: AtomicBool,
     deauthorized: AtomicBool,
     settings: Mutex<UserSettings>,
+    last_voice_msg: Mutex<OneshotRateLimiter<50>>,
+    last_quick_chat_msg: Mutex<OneshotRateLimiter<3000>>,
 }
 
 impl ClientData {
@@ -118,5 +123,13 @@ impl ClientData {
 
     pub fn is_moderator(&self) -> bool {
         self.is_moderator.load(Ordering::Relaxed)
+    }
+
+    pub fn try_voice_chat(&self) -> bool {
+        self.last_voice_msg.lock().try_acquire()
+    }
+
+    pub fn try_quick_chat(&self) -> bool {
+        self.last_quick_chat_msg.lock().try_acquire()
     }
 }

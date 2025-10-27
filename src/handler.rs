@@ -1006,7 +1006,7 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        if !self.check_can_talk(client)? {
+        if !self.check_can_talk(client, true)? {
             return Ok(());
         }
 
@@ -1042,7 +1042,7 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        if !self.check_can_talk(client)? {
+        if !self.check_can_talk(client, false)? {
             return Ok(());
         }
 
@@ -1067,7 +1067,7 @@ impl ConnectionHandler {
         Ok(())
     }
 
-    fn check_can_talk(&self, client: &ClientStateHandle) -> HandlerResult<bool> {
+    fn check_can_talk(&self, client: &ClientStateHandle, is_voice: bool) -> HandlerResult<bool> {
         if !self.get_cached_user(client.account_id()).map_or(false, |x| x.can_use_voice) {
             debug!(
                 "[{} @ {}] got a chat message but user is not allowed to use chat",
@@ -1081,10 +1081,14 @@ impl ConnectionHandler {
             })?;
             client.send_data_bufkind(buf);
 
-            Ok(false)
-        } else {
-            Ok(true)
+            return Ok(false);
         }
+
+        Ok(if is_voice {
+            client.data().try_voice_chat()
+        } else {
+            client.data().try_quick_chat()
+        })
     }
 }
 
