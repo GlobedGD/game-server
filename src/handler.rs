@@ -47,6 +47,7 @@ struct CentralRoom {
 
 #[derive(Clone, Debug)]
 struct CachedUserData {
+    pub can_use_qc: bool,
     pub can_use_voice: bool,
     pub accessed_at: Instant,
 }
@@ -409,17 +410,19 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn add_user_data_cache(&self, account_id: i32, can_use_voice: bool) {
+    pub fn add_user_data_cache(&self, account_id: i32, can_use_qc: bool, can_use_voice: bool) {
         let now = Instant::now();
 
-        debug!("received user data ({account_id}), voice: {can_use_voice}");
+        debug!("received user data ({account_id}), qc: {can_use_qc}, voice: {can_use_voice}");
 
         let mut entry = self.user_cache.entry(account_id).or_insert_with(|| CachedUserData {
+            can_use_qc: false,
             can_use_voice: false,
             accessed_at: now,
         });
 
         entry.can_use_voice = can_use_voice;
+        entry.can_use_qc = can_use_qc;
         entry.accessed_at = now;
     }
 
@@ -1068,7 +1071,10 @@ impl ConnectionHandler {
     }
 
     fn check_can_talk(&self, client: &ClientStateHandle, is_voice: bool) -> HandlerResult<bool> {
-        if !self.get_cached_user(client.account_id()).map_or(false, |x| x.can_use_voice) {
+        if !self
+            .get_cached_user(client.account_id())
+            .map_or(false, |x| if is_voice { x.can_use_voice } else { x.can_use_qc })
+        {
             debug!(
                 "[{} @ {}] got a chat message but user is not allowed to use chat",
                 client.account_id(),
