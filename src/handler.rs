@@ -287,7 +287,13 @@ impl AppHandler for ConnectionHandler {
                 let msg = VoiceMessage::decode(client.account_id(), msg)?;
 
                 self.handle_voice_data(client, msg)
-            }
+            },
+
+            QuickChat(msg) => {
+                let id = msg.get_id();
+
+                self.handle_quick_chat(client, id)
+            },
         });
 
         match result {
@@ -1000,19 +1006,7 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        if !self.get_cached_user(client.account_id()).map_or(false, |x| x.can_use_voice) {
-            debug!(
-                "[{} @ {}] got VoiceDataMessage but user is not allowed to use voice",
-                client.account_id(),
-                client.address
-            );
-
-            // send a message to the user telling them they are muted
-            let buf = data::encode_message!(self, 48, msg => {
-                msg.reborrow().init_chat_not_permitted();
-            })?;
-            client.send_data_bufkind(buf);
-
+        if !self.check_can_talk(client)? {
             return Ok(());
         }
 
@@ -1034,6 +1028,64 @@ impl ConnectionHandler {
 
         Ok(())
     }
+
+    fn handle_quick_chat(&self, client: &ClientStateHandle, id: u32) -> HandlerResult<()> {
+        must_auth(client)?;
+
+        let Some(session) = client.session() else {
+            warn!(
+                "[{} @ {}] got QuickChatMessage while not in session",
+                client.account_id(),
+                client.address
+            );
+
+            return Ok(());
+        };
+
+        if !self.check_can_talk(client)? {
+            return Ok(());
+        }
+
+        // broadcast message to everyone
+
+        let buf = Arc::new(data::encode_message_heap!(self, 48, msg => {
+            let mut m = msg.init_quick_chat_broadcast();
+            m.set_id(id);
+            m.set_account_id(client.account_id());
+        })?);
+
+        debug!("broadcasting quick chat message from {} (msg {})", client.account_id(), id);
+
+        session.for_every_player_id(|id| {
+            if id != client.account_id() {
+                if let Some(c) = self.find_client(id) {
+                    c.send_unreliable_data_bufkind(BufferKind::Reference(buf.clone()));
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    fn check_can_talk(&self, client: &ClientStateHandle) -> HandlerResult<bool> {
+        if !self.get_cached_user(client.account_id()).map_or(false, |x| x.can_use_voice) {
+            debug!(
+                "[{} @ {}] got a chat message but user is not allowed to use chat",
+                client.account_id(),
+                client.address
+            );
+
+            // send a message to the user telling them they are muted
+            let buf = data::encode_message!(self, 48, msg => {
+                msg.reborrow().init_chat_not_permitted();
+            })?;
+            client.send_data_bufkind(buf);
+
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    }
 }
 
 fn must_auth(client: &ClientState<ConnectionHandler>) -> HandlerResult<()> {
@@ -1051,7 +1103,6 @@ fn decode_script_array<'a>(
 
     let scrs = msg.get_scripts()?;
     if scrs.len() > MAX_SCRIPT_COUNT as u32 {
-        // TODO: send error
         warn!("error decoding scripts: too many scripts ({})", scrs.len());
         return Err(DataDecodeError::ValidationFailed);
     }
@@ -1061,7 +1112,6 @@ fn decode_script_array<'a>(
         if thing.has_signature() {
             let sig = thing.get_signature()?;
             if sig.len() != 32 {
-                // TODO: send error
                 warn!("error decoding scripts: signature mismatch (length {})", sig.len());
                 return Err(DataDecodeError::ValidationFailed);
             }

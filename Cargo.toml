@@ -17,7 +17,7 @@ qunet = { git = "https://github.com/dankmeme01/qunet", rev = "e717900e", feature
     "client",
 ] }
 rand = "0.9.1"
-server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "e630990a", features = [
+server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "acda12ca", features = [
     "game",
     "srvc",
 ] }
