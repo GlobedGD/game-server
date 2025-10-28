@@ -9,9 +9,9 @@ use std::{
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 use parking_lot::Mutex;
-use qunet::server::{ServerHandle, WeakServerHandle};
 use rustc_hash::{FxHashMap, FxHashSet};
 use server_shared::SessionId;
+use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
 use thiserror::Error;
 use tracing::{error, trace};

@@ -1,4 +1,4 @@
-use qunet::buffers::Bits;
+use server_shared::qunet::buffers::Bits;
 
 use super::*;
 

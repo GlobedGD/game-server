@@ -6,7 +6,7 @@ pub use ids::*;
 pub use r#in::*;
 pub use out::*;
 
-use qunet::buffers::{ByteReader, ByteWriter, ByteWriterError};
+use server_shared::qunet::buffers::{ByteReader, ByteWriter, ByteWriterError};
 use smallvec::SmallVec;
 use thiserror::Error;
 

@@ -10,7 +10,7 @@ use std::{
 use crate::handler::ConnectionHandler;
 
 use super::{data, server_role::ServerRole};
-use qunet::{
+use server_shared::qunet::{
     client::{Client, ClientHandle, ConnectionError, EventHandler},
     message::MsgData,
     server::{ServerHandle as QunetServerHandle, WeakServerHandle},

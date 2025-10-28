@@ -4,7 +4,7 @@
 use std::net::IpAddr;
 
 use self::tokio::io::{AsyncReadExt, AsyncWriteExt};
-use qunet::server::{
+use server_shared::qunet::server::{
     ServerOutcome,
     builder::{MemoryUsageOptions, UdpDiscoveryMode},
 };
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let handler = ConnectionHandler::new(&config, data).await;
 
-    let mut builder = qunet::server::Server::builder()
+    let mut builder = server_shared::qunet::server::Server::builder()
         .with_memory_options(make_memory_limits(config.memory_usage))
         .with_max_messages_per_second(config.tickrate + 10) // add 10 to account for various misc packets
         .with_app_handler(handler);

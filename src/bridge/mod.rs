@@ -1,6 +1,6 @@
 /// Bridge to the central server.
 ///
-use qunet::{
+use server_shared::qunet::{
     client::{Client, ClientHandle, ClientOutcome, ConnectionError},
     server::WeakServerHandle,
 };

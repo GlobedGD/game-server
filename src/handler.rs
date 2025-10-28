@@ -9,7 +9,7 @@ use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use build_time::build_time_utc;
 use dashmap::DashMap;
-use qunet::{
+use server_shared::qunet::{
     buffers::{ByteReader, ByteWriter},
     message::{BufferKind, MsgData},
     server::{
