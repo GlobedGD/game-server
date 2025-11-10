@@ -67,6 +67,8 @@ pub struct ConnectionHandler {
     user_cache: DashMap<i32, CachedUserData>,
 
     tickrate: usize,
+
+    #[cfg(feature = "scripting")]
     verify_script_signatures: bool,
 }
 
@@ -334,6 +336,7 @@ impl ConnectionHandler {
             all_rooms: DashMap::new(),
             user_cache: DashMap::new(),
             tickrate: config.tickrate,
+            #[cfg(feature = "scripting")]
             verify_script_signatures: config.verify_script_signatures,
         }
     }
@@ -400,7 +403,7 @@ impl ConnectionHandler {
         self.all_rooms.remove(&room_id);
     }
 
-    pub fn get_cached_user(&self, account_id: i32) -> Option<CachedUserData> {
+    fn get_cached_user(&self, account_id: i32) -> Option<CachedUserData> {
         match self.user_cache.get_mut(&account_id) {
             Some(ent) => {
                 let mut entry = ent;
@@ -958,6 +961,17 @@ impl ConnectionHandler {
             );
 
             return Ok(());
+        }
+
+        #[cfg(not(feature = "scripting"))]
+        {
+            let _ = scripts;
+
+            warn!(
+                "[{} @ {}] got SendLevelScript but scripting is disabled",
+                client.account_id(),
+                client.address
+            );
         }
 
         #[cfg(feature = "scripting")]

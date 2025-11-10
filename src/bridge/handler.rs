@@ -165,15 +165,6 @@ impl BridgeHandler {
             .expect("Server has shut down")
     }
 
-    /// Tells the main server to shut down.
-    fn notify_shutdown(&self) {
-        if let Some(server) = self.server_handle.get()
-            && let Some(server) = server.upgrade()
-        {
-            server.shutdown();
-        }
-    }
-
     pub fn server_url(&self) -> &str {
         &self.server_url
     }

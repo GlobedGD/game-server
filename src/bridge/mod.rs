@@ -9,6 +9,7 @@ use tracing::error;
 
 use crate::{bridge::handler::BridgeHandler, config::Config, handler::ConnectionHandler};
 
+#[allow(unused)]
 mod data;
 mod handler;
 mod server_role;

@@ -10,11 +10,9 @@ use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
-use server_shared::SessionId;
 use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
-use thiserror::Error;
-use tracing::{error, trace};
+use tracing::trace;
 
 use crate::{
     events::*,
@@ -23,9 +21,13 @@ use crate::{
     trigger_manager::TriggerManager,
 };
 #[cfg(feature = "scripting")]
-use crate::{
-    handler::BorrowedLevelScript,
-    scripting::{LuaCompilerError, ScriptManager},
+use {
+    crate::{
+        handler::BorrowedLevelScript,
+        scripting::{LuaCompilerError, ScriptManager},
+    },
+    server_shared::SessionId,
+    thiserror::Error,
 };
 
 pub struct SessionManager {
@@ -105,10 +107,11 @@ struct UnreadValue {
 #[derive(Default)]
 pub struct GamePlayerState {
     pub state: PlayerState,
-    pub unread_counter_values: FxHashMap<u32, UnreadValue>,
-    pub unread_events: VecDeque<OutEvent>,
-    pub prio_counter: usize,
     pub wants_hidden: bool,
+
+    unread_counter_values: FxHashMap<u32, UnreadValue>,
+    unread_events: VecDeque<OutEvent>,
+    prio_counter: usize,
 }
 
 impl GamePlayerState {
@@ -169,8 +172,10 @@ pub struct GameSession {
     counters: DashMap<u32, i32, BuildNoHashHasher<u32>>,
     player_ids: Mutex<FxHashSet<i32>>,
     triggers: TriggerManager,
-    created_at: Instant,
     manager: Weak<SessionManager>,
+
+    #[allow(unused)]
+    created_at: Instant,
 
     #[cfg(feature = "scripting")]
     scripting: OnceLock<ScriptManager>,
