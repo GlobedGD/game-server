@@ -30,6 +30,7 @@ use crate::{
 
 pub struct SessionManager {
     sessions: DashMap<u64, Arc<GameSession>>,
+    ec_sessions: DashMap<u64, Arc<GameSession>>,
     heartbeats: Mutex<FxHashSet<Arc<GameSession>>>,
     server: OnceLock<WeakServerHandle<ConnectionHandler>>,
 }
@@ -38,6 +39,7 @@ impl SessionManager {
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
+            ec_sessions: DashMap::new(),
             heartbeats: Mutex::default(),
             server: OnceLock::new(),
         }
@@ -56,16 +58,20 @@ impl SessionManager {
         session_id: u64,
         owner: i32,
         platformer: bool,
+        editor_collab: bool,
     ) -> Arc<GameSession> {
-        self.sessions
-            .entry(session_id)
-            .or_insert_with(|| GameSession::new(session_id, owner, platformer, self))
+        let map = if editor_collab { &self.ec_sessions } else { &self.sessions };
+
+        map.entry(session_id)
+            .or_insert_with(|| GameSession::new(session_id, owner, platformer, editor_collab, self))
             .clone()
     }
 
-    pub fn delete_session_if_empty(&self, session_id: u64) {
+    pub fn delete_session_if_empty(&self, session_id: u64, editor_collab: bool) {
+        let map = if editor_collab { &self.ec_sessions } else { &self.sessions };
+
         if let Some((_, session)) =
-            self.sessions.remove_if(&session_id, |_, session| session.players.is_empty())
+            map.remove_if(&session_id, |_, session| session.players.is_empty())
         {
             self.heartbeats.lock().remove(&session);
         }
@@ -154,9 +160,11 @@ impl GamePlayerState {
 }
 
 pub struct GameSession {
-    id: u64,
-    owner: i32,
-    platformer: bool,
+    pub id: u64,
+    pub owner: i32,
+    pub platformer: bool,
+    pub editor_collab: bool,
+
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
     counters: DashMap<u32, i32, BuildNoHashHasher<u32>>,
     player_ids: Mutex<FxHashSet<i32>>,
@@ -171,11 +179,18 @@ pub struct GameSession {
 }
 
 impl GameSession {
-    fn new(id: u64, owner: i32, platformer: bool, manager: &Arc<SessionManager>) -> Arc<Self> {
+    fn new(
+        id: u64,
+        owner: i32,
+        platformer: bool,
+        editor_collab: bool,
+        manager: &Arc<SessionManager>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             id,
             owner,
             platformer,
+            editor_collab,
             players: DashMap::default(),
             counters: DashMap::default(),
             player_ids: Mutex::new(FxHashSet::default()),
@@ -187,18 +202,6 @@ impl GameSession {
             #[cfg(feature = "scripting")]
             logs: Mutex::default(),
         })
-    }
-
-    pub fn id(&self) -> u64 {
-        self.id
-    }
-
-    pub fn owner(&self) -> i32 {
-        self.owner
-    }
-
-    pub fn platformer(&self) -> bool {
-        self.platformer
     }
 
     pub fn triggers(&self) -> &TriggerManager {

@@ -72,7 +72,7 @@ impl ClientData {
 
     /// Sets the session for this client, returning the previous session if it existed.
     pub fn set_session(&self, session: Arc<GameSession>) -> Option<Arc<GameSession>> {
-        self.session_id.store(session.id(), Ordering::Relaxed);
+        self.session_id.store(session.id, Ordering::Relaxed);
         let mut old = self.session.lock();
         old.replace(session)
     }
