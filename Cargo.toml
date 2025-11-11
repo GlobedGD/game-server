@@ -46,6 +46,7 @@ blake3 = "1.8.2"
 nohash-hasher = "0.2.0"
 build-time = "0.1.3"
 atomic_float = "1.1.0"
+time-format = "1.2.2"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5"
@@ -58,3 +59,4 @@ default = ["tokio"]
 scripting = ["dep:mlua"]
 all = ["scripting"]
 tokio_tracing = ["dep:tokio_tracing", "server-shared/tokio_tracing"]
+stat-tracking = []

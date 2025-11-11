@@ -118,6 +118,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.with_qdb_file(path);
     }
 
+    #[cfg(feature = "stat-tracking")]
+    {
+        builder = builder.with_stat_tracker(true);
+    }
+
     // run the server
     let outcome = builder.run().await;
 
