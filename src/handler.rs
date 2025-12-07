@@ -1130,7 +1130,7 @@ impl ConnectionHandler {
     fn check_can_talk(&self, client: &ClientStateHandle, is_voice: bool) -> HandlerResult<bool> {
         if !self
             .get_cached_user(client.account_id())
-            .map_or(false, |x| if is_voice { x.can_use_voice } else { x.can_use_qc })
+            .is_some_and(|x| if is_voice { x.can_use_voice } else { x.can_use_qc })
         {
             debug!(
                 "[{} @ {}] got a chat message but user is not allowed to use chat",
@@ -1301,4 +1301,3 @@ async fn dump_connection_data(conn: &FinishedConnection, dir: &Path) -> std::io:
 
     Ok(())
 }
-
