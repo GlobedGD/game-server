@@ -83,7 +83,7 @@ impl EventHandler for BridgeHandler {
                 if let Err(e) = self.server().handler().init_bridge_things(token_key, token_expiry, script_key) {
                     error!("Failed to initialize token issuer: {e}");
                     client.disconnect();
-                    return;
+                    return Ok(());
                 }
 
                 let in_roles = msg.get_roles()?;
@@ -92,7 +92,6 @@ impl EventHandler for BridgeHandler {
                 for role in in_roles.iter() {
                     roles.push(ServerRole::from_reader(role)?);
                 }
-
 
                 self.set_authenticated(true);
                 self.server().handler().set_server_roles(roles);
