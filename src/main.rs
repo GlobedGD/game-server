@@ -13,11 +13,9 @@ use tracing::error;
 
 use crate::{config::Config, handler::ConnectionHandler};
 
-#[cfg(all(not(target_env = "msvc"), not(debug_assertions)))]
-use tikv_jemallocator::Jemalloc;
-#[cfg(all(not(target_env = "msvc"), not(debug_assertions)))]
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc"), not(debug_assertions)))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(not(feature = "tokio_tracing"))]
 pub use tokio;
