@@ -1040,9 +1040,10 @@ impl ConnectionHandler {
                     .log_script_message(&format!("[WARN] failed to initialize main script: {e}"));
             } else {
                 // invoke join callback for all players that were in the level beforehand
-                session.for_every_player_id(|id| {
+                let ids = session.get_all_player_ids();
+                for id in ids {
                     self.emit_script_event(client, &session, &InEvent::PlayerJoin(id));
-                });
+                }
             }
         }
 

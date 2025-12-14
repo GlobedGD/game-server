@@ -326,6 +326,10 @@ impl GameSession {
         self.player_ids.lock().iter().for_each(|p| f(*p));
     }
 
+    pub fn get_all_player_ids(&self) -> Vec<i32> {
+        self.player_ids.lock().iter().copied().collect()
+    }
+
     pub fn notify_counter_change(&self, item_id: u32, value: i32) {
         if value == 0 {
             self.counters.remove(&item_id);
