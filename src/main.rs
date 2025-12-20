@@ -53,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &config.console_log_level,
         &config.file_log_level,
         config.log_file_enabled,
+        config.memory_usage,
     );
 
     if config.central_server_url.is_empty() {
