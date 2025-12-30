@@ -20,12 +20,14 @@ jobs:
       - name: Build
         uses: docker/build-push-action@v6
         with:
-          cache-from: type=gha,scope=game-server
-          cache-to: type=gha,mode=max,scope=game-server
+          cache-from: type=gha,scope=game-server-linux-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=game-server-linux-${{ matrix.arch }}
           outputs: type=local,dest=out,compression=zstd,compression-level=8
           target: runtime-debian
           platforms: linux/${{ matrix.arch }}
           push: false
+        env:
+          DOCKER_BUILD_SUMMARY: false
 
       - name: Prepare artifacts
         run: |
