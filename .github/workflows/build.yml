@@ -14,19 +14,18 @@ jobs:
         arch: [amd64, arm64]
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Set up buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build
-        run: |
-          docker buildx build \
-            --target runtime-debian \
-            --platform linux/${{ matrix.arch }} \
-            --cache-from type=gha,scope=game-server \
-            --cache-to type=gha,mode=max,scope=game-server \
-            --output type=local,dest=out .
+        uses: docker/build-push-action@v6
+        with:
+          cache-from: type=gha,scope=game-server
+          cache-to: type=gha,mode=max,scope=game-server
+          outputs: type=local,dest=out,compression=zstd,compression-level=8
+          target: runtime-debian
+          platforms: linux/${{ matrix.arch }}
+          push: false
 
       - name: Prepare artifacts
         run: |
