@@ -4,3 +4,4 @@ config.toml
 logs
 docker-target
 game-server-x64
+*.lua
