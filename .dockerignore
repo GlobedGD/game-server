@@ -1,0 +1,12 @@
+.idea
+.cargo
+.github
+.vscode
+target
+user-scripts
+config
+logs
+quic
+*.sh
+*.json
+config.toml
