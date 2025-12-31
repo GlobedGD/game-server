@@ -680,7 +680,7 @@ impl ConnectionHandler {
     async fn handle_leave_session(&self, client: &ClientStateHandle) -> HandlerResult<()> {
         must_auth(client)?;
 
-        debug!("[{}] leaving session", client.address);
+        debug!("[{} @ {}] leaving session", client.account_id(), client.address);
 
         if let Some(session) = client.take_session() {
             self.remove_from_session(client, &session);
@@ -690,7 +690,7 @@ impl ConnectionHandler {
     }
 
     fn remove_from_session(&self, client: &ClientStateHandle, session: &GameSession) {
-        let account_id = client.account_id();
+        let account_id = client.account_id_force();
         session.remove_player(account_id);
         self.session_manager.delete_session_if_empty(session.id, session.editor_collab);
 

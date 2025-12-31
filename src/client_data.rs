@@ -50,6 +50,11 @@ impl ClientData {
         self.account_data().map(|x| x.account_id).unwrap_or(0)
     }
 
+    /// Returns the account ID even if the client is unauthorized.
+    pub fn account_id_force(&self) -> i32 {
+        self.account_data.get().map(|x| x.account_id).unwrap_or(0)
+    }
+
     /// Returns the account ID if the client is authorized, otherwise returns 0.
     pub fn user_id(&self) -> i32 {
         self.account_data().map(|x| x.user_id).unwrap_or(0)
