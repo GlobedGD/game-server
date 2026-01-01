@@ -55,7 +55,7 @@ jobs:
             type=image,push-by-digest=true,name-canonical=true,push=true
             type=local,dest=out
           target: runtime-debian
-          platforms: ${{ env.PLATFORM_PAIR }}
+          platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ env.GHCR_IMAGE }}
         env:
