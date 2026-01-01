@@ -1,23 +1,31 @@
-FROM --platform=$BUILDPLATFORM rustlang/rust:nightly AS builder-base
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS builder-base
 
-ENV SERVER_SHARED_PREBUILT_DATA=1
+ARG RUST_NIGHTLY_VERSION=nightly-2025-12-01
+ARG ZIG_VERSION=0.16.0-dev.1859+212968c57
+
+ENV SERVER_SHARED_PREBUILT_DATA=1 \
+    CARGO_HOME=/cargo \
+    RUSTUP_HOME=/rustup \
+    PATH="/cargo/bin:/rustup/toolchains/${RUST_NIGHTLY_VERSION}/bin:$PATH"
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config ca-certificates curl xz-utils
-RUN rm -rf /var/lib/apt/lists/*
+    pkg-config ca-certificates curl xz-utils build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+RUN rustup toolchain install ${RUST_NIGHTLY_VERSION} && rustup default ${RUST_NIGHTLY_VERSION}
 
 # download zig
-RUN curl -L https://ziglang.org/builds/zig-x86_64-linux-0.16.0-dev.1859+212968c57.tar.xz | tar -xJ && mv zig-x86_64-linux-0.16.0-dev.1859+212968c57 /zig
+RUN curl -L https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | tar -xJ && mv zig-x86_64-linux-${ZIG_VERSION} /zig
 ENV PATH="/zig:${PATH}"
 
-# install zigbuild
-RUN cargo install --locked cargo-zigbuild
+# install zigbuild and cargo chef
+RUN cargo install --locked cargo-zigbuild cargo-chef
 
-# create blank project to cache dependencies
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# prepare the build cache
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
 ## Musl ##
 FROM builder-base AS builder-musl
@@ -30,13 +38,13 @@ RUN case "$TARGETARCH" in \
     *) echo "unsupported architecture" >&2; exit 1 ;; \
     esac
 
-# install target and build
-RUN rustup target add $(cat /target.txt)
-RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
+# build dependencies
+RUN rustup target add $(cat /target.txt) && \
+    rm -rf src && \
+    cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
 
-# build the real project now
-RUN rm -rf src
-COPY src ./src
+# build the project
+COPY . .
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
 ## glibc ##
@@ -50,12 +58,12 @@ RUN case "$TARGETARCH" in \
     *) echo "unsupported architecture" >&2; exit 1 ;; \
     esac
 
-# install target and build
-RUN rustup target add $(cat /target.txt)
-RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
+# build dependencies
+RUN rustup target add $(cat /target.txt) && \
+    rm -rf src && \
+    cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
 
-# build the real project now
-RUN rm -rf src
+# build the project
 COPY src ./src
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
@@ -69,7 +77,7 @@ EXPOSE 4349/udp
 ENTRYPOINT ["/game-server"]
 
 ## debian runtime ##
-FROM debian:stable-slim AS runtime-debian
+FROM debian:trixie-slim AS runtime-debian
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
