@@ -1,5 +1,12 @@
 name: Build Globed server
 
+# needed to push to ghcr
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
 on:
   workflow_dispatch:
   push:
