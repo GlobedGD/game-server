@@ -1,14 +1,11 @@
-FROM --platform=$BUILDPLATFORM debian:trixie-slim AS builder-base
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS builder-tools
 
 ARG RUST_NIGHTLY_VERSION=nightly-2025-12-01
 ARG ZIG_VERSION=0.16.0-dev.1859+212968c57
 
-ENV SERVER_SHARED_PREBUILT_DATA=1 \
-    CARGO_HOME=/cargo \
+ENV CARGO_HOME=/cargo \
     RUSTUP_HOME=/rustup \
     PATH="/cargo/bin:/rustup/toolchains/${RUST_NIGHTLY_VERSION}/bin:$PATH"
-
-WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config ca-certificates curl xz-utils build-essential \
@@ -20,8 +17,17 @@ RUN curl -L https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | 
 ENV PATH="/zig:${PATH}"
 
 # install zigbuild and cargo chef
-RUN cargo install --locked cargo-zigbuild --version 0.20.1
-RUN cargo install --locked cargo-chef --version 0.1.73
+RUN cargo install --locked cargo-zigbuild --version 0.20.1 \
+    && cargo install --locked cargo-chef --version 0.1.73
+
+
+## Actual builder base ##
+FROM builder-tools AS builder-base
+
+ENV SERVER_SHARED_PREBUILT_DATA=1
+WORKDIR /app
+COPY --from=builder-tools /cargo /cargo
+COPY --from=builder-tools /rustup /rustup
 
 # prepare the build cache
 COPY . .

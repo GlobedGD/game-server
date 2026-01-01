@@ -171,9 +171,9 @@ jobs:
         with:
           name: game-server-build
           delete-merged: true
-          pattern: game-server*
+          pattern: '!digests-*'
 
       - name: Delete digests
         uses: GeekyEggo/delete-artifact@v5.1.0
         with:
-          name: '!game-server-build'
+          name: 'digests-*'
