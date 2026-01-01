@@ -13,7 +13,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config ca-certificates curl xz-utils build-essential \
     && rm -rf /var/lib/apt/lists/*
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --toolchain ${RUST_NIGHTLY_VERSION}
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain ${RUST_NIGHTLY_VERSION}
 
 # download zig
 RUN curl -L https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | tar -xJ && mv zig-x86_64-linux-${ZIG_VERSION} /zig
