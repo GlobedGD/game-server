@@ -97,6 +97,18 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: runtime-debian
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=game-server-linux-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=game-server-linux-${{ matrix.arch }}
+
+
   merge:
     name: Merge artifacts
     runs-on: ubuntu-latest
