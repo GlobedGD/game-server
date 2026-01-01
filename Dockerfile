@@ -20,7 +20,8 @@ RUN curl -L https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | 
 ENV PATH="/zig:${PATH}"
 
 # install zigbuild and cargo chef
-RUN cargo install --locked cargo-zigbuild cargo-chef
+RUN cargo install --locked cargo-zigbuild --version 0.20.1
+RUN cargo install --locked cargo-chef --version 0.1.73
 
 # prepare the build cache
 COPY . .
