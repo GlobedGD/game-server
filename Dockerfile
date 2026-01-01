@@ -15,9 +15,9 @@ ENV PATH="/zig:${PATH}"
 # install zigbuild
 RUN cargo install --locked cargo-zigbuild
 
-# copy the server
-COPY src ./src
+# create blank project to cache dependencies
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
 
 ## Musl ##
 FROM builder-base AS builder-musl
@@ -34,6 +34,11 @@ RUN case "$TARGETARCH" in \
 RUN rustup target add $(cat /target.txt)
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
+# build the real project now
+RUN rm -rf src
+COPY src ./src
+RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
+
 ## glibc ##
 FROM builder-base AS builder-glibc
 ARG TARGETARCH
@@ -47,6 +52,11 @@ RUN case "$TARGETARCH" in \
 
 # install target and build
 RUN rustup target add $(cat /target.txt)
+RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
+
+# build the real project now
+RUN rm -rf src
+COPY src ./src
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
 ## alpine runtime ##
