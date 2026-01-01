@@ -57,7 +57,7 @@ jobs:
           target: runtime-debian
           platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ${{ env.GHCR_IMAGE }}
+          tags: ${{ steps.meta.outputs.tags }}
         env:
           DOCKER_BUILD_SUMMARY: false
 
