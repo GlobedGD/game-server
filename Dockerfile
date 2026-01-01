@@ -13,8 +13,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config ca-certificates curl xz-utils build-essential \
     && rm -rf /var/lib/apt/lists/*
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
-RUN rustup toolchain install ${RUST_NIGHTLY_VERSION} && rustup default ${RUST_NIGHTLY_VERSION}
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --toolchain ${RUST_NIGHTLY_VERSION}
 
 # download zig
 RUN curl -L https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | tar -xJ && mv zig-x86_64-linux-${ZIG_VERSION} /zig
@@ -40,7 +39,7 @@ RUN case "$TARGETARCH" in \
 
 # build dependencies
 RUN rustup target add $(cat /target.txt) && \
-    rm -rf src && \
+    rm -rf src Cargo.lock Cargo.toml && \
     cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
 
 # build the project
@@ -60,11 +59,11 @@ RUN case "$TARGETARCH" in \
 
 # build dependencies
 RUN rustup target add $(cat /target.txt) && \
-    rm -rf src && \
+    rm -rf src Cargo.lock Cargo.toml && \
     cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
 
 # build the project
-COPY src ./src
+COPY . .
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
 ## alpine runtime ##
