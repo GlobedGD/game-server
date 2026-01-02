@@ -25,11 +25,10 @@ FROM builder-tools AS builder-base
 
 ENV SERVER_SHARED_PREBUILT_DATA=1
 WORKDIR /app
-COPY --from=builder-tools /cargo /cargo
-COPY --from=builder-tools /rustup /rustup
 
 # prepare the build cache
-COPY . .
+COPY src ./src
+COPY Cargo.toml Cargo.lock ./
 RUN cargo chef prepare --recipe-path recipe.json
 
 ## Musl ##
@@ -44,12 +43,11 @@ RUN case "$TARGETARCH" in \
     esac
 
 # build dependencies
-RUN rustup target add $(cat /target.txt) && \
-    rm -rf src Cargo.lock Cargo.toml && \
-    cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
+RUN cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
 
 # build the project
-COPY . .
+COPY src ./src
+COPY Cargo.toml Cargo.lock ./
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
 ## glibc ##
@@ -64,12 +62,11 @@ RUN case "$TARGETARCH" in \
     esac
 
 # build dependencies
-RUN rustup target add $(cat /target.txt) && \
-    rm -rf src Cargo.lock Cargo.toml && \
-    cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
+RUN cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
 
 # build the project
-COPY . .
+COPY src ./src
+COPY Cargo.toml Cargo.lock ./
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
 ## alpine runtime ##
