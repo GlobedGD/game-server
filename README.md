@@ -59,6 +59,14 @@ docker run --rm -it  \
 
 The container will attempt to create a file at path `/data/config.toml` if one does not exist. The command above mounts `/data` to your current directory, making it so that the file appears there. Once you have the file generated, it may be more convenient and secure to change that mount to `-v ./config.toml:/data/config.toml`.
 
+You can also avoid using the config file altogether by using environment variables for config:
+```sh
+docker run --rm -it \
+    -e GLOBED_GS_CENTRAL_URL="qunet://globed.dev" \
+    -p 4349:4349/tcp -p 4349:4349/udp \
+    ghcr.io/globedgd/game-server:latest
+```
+
 If you want to build the images yourself, docker buildx can be used:
 ```sh
 docker buildx build --target <target> --platform <platform> -t game-server:latest .
