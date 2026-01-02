@@ -1,5 +1,22 @@
 # Globed Game Server
 
+## Running
+
+The simplest way to get the server running is [GitHub actions](https://github.com/GlobedGD/game-server/actions) - click the latest workflow and download the `game-server-build` artifact, which will contain three executables for different platforms. Extract the one that matches your platform into a dedicated folder somewhere and run it.
+
+There are currently prebuilts for three platforms, for others you need to build manually or use Docker:
+* `game-server-x64` - Linux x64 build, requires glibc 2.30+ (e.g. Ubuntu 20.04 or later)
+* `game-server-arm64` - Linux ARM64 build, requires glibc 2.30+
+* `game-server.exe` - Windows x64 build
+
+Alternate ways of running the server include:
+* [Building yourself](#building)
+* [Docker](#docker-builds)
+
+## Configuring
+
+Upon running the server for the first time, a `config.toml` file is created. TODO rest of this
+
 ## Building
 
 Nightly rust is required. If you have never used Rust, install rustup from https://rustup.rs/ and then ensure you have the latest version by running
@@ -32,7 +49,17 @@ Possible feature flags:
 
 ## Docker builds
 
-Docker buildx can be used to build an image of the server:
+Prebuilt images are available on the GitHub Container Registry, making it very simple to spin up a server like so:
+```sh
+docker run --rm -it  \
+    -v ./:/data \
+    -p 4349:4349/tcp -p 4349:4349/udp \
+    ghcr.io/globedgd/game-server:latest
+```
+
+The container will attempt to create a file at path `/data/config.toml` if one does not exist. The command above mounts `/data` to your current directory, making it so that the file appears there. Once you have the file generated, it may be more convenient and secure to change that mount to `-v ./config.toml:/data/config.toml`.
+
+If you want to build the images yourself, docker buildx can be used:
 ```sh
 docker buildx build --target <target> --platform <platform> -t game-server:latest .
 # to save the image
@@ -46,7 +73,3 @@ docker save -o image.tar game-server:latest
 These builds include the `mimalloc` feature. The Github Actions builds are made with buildx and are identical to the builds produced in the `runtime-debian` image.
 
 The `scripting` feature cannot be used in musl builds.
-
-## Configuring
-
-Upon running the server for the first time, a `config.toml` file is created. TODO rest of this

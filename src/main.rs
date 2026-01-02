@@ -38,6 +38,11 @@ pub mod voice_message;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // if we are inside docker, change cwd to /data
+    if std::env::var("INSIDE_DOCKER").is_ok_and(|x| x != "0") {
+        std::env::set_current_dir("/data").expect("Failed to change working directory to /data");
+    }
+
     let config = match Config::new() {
         Ok(x) => x,
         Err(e) => {

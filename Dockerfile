@@ -79,6 +79,7 @@ COPY --from=builder-musl /app/target/*/release/game-server /game-server
 EXPOSE 4349/tcp
 EXPOSE 4349/udp
 
+ENV INSIDE_DOCKER=1
 ENTRYPOINT ["/game-server"]
 
 ## debian runtime ##
@@ -92,4 +93,5 @@ COPY --from=builder-glibc /app/target/*/release/game-server /game-server
 EXPOSE 4349/tcp
 EXPOSE 4349/udp
 
+ENV INSIDE_DOCKER=1
 ENTRYPOINT ["/game-server"]
