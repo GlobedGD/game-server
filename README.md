@@ -2,7 +2,7 @@
 
 ## Running
 
-The simplest way to get the server running is [GitHub actions](https://github.com/GlobedGD/game-server/actions) - click the latest workflow and download the `game-server-build` artifact, which will contain three executables for different platforms. Extract the one that matches your platform into a dedicated folder somewhere and run it.
+The simplest way to get the server running is [GitHub Actions](https://github.com/GlobedGD/game-server/actions) - click the latest workflow and download the `game-server-build` artifact, which will contain three executables for different platforms. Extract the one that matches your platform into a dedicated folder somewhere and run it.
 
 There are currently prebuilts for three platforms, for others you need to build manually or use Docker:
 * `game-server-x64` - Linux x64 build, requires glibc 2.30+ (e.g. Ubuntu 20.04 or later)
