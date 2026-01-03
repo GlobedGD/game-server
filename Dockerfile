@@ -20,18 +20,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         x86_64-unknown-linux-gnu \
         aarch64-unknown-linux-gnu
 
-## Actual builder base ##
-FROM builder-tools AS builder-base
-
 ENV SERVER_SHARED_PREBUILT_DATA=1
 WORKDIR /app
 
-# prepare the build cache
+## Cargo chef planner ##
+FROM builder-tools AS planner
+
+# prepare the recipe
 COPY src ./src
 COPY Cargo.toml Cargo.lock ./
 RUN cargo chef prepare --recipe-path recipe.json
 
-## Musl ##
+## Builder base ##
+FROM builder-tools AS builder-base
+COPY --from=planner /app/recipe.json recipe.json
+
+## musl builder ##
 FROM builder-base AS builder-musl
 ARG TARGETARCH
 
@@ -50,7 +54,7 @@ COPY src ./src
 COPY Cargo.toml Cargo.lock ./
 RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
 
-## glibc ##
+## glibc builder ##
 FROM builder-base AS builder-glibc
 ARG TARGETARCH
 
