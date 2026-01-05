@@ -5,7 +5,6 @@ use server_shared::qunet::{
     server::WeakServerHandle,
 };
 use thiserror::Error;
-use tracing::error;
 
 use crate::{bridge::handler::BridgeHandler, config::Config, handler::ConnectionHandler};
 
