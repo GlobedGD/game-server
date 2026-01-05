@@ -3,6 +3,10 @@ name = "game-server"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [dependencies]
 capnp = { version = "0.21.2", default-features = false, features = [
     "unaligned",
