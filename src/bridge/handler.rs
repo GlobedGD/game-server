@@ -74,7 +74,7 @@ impl EventHandler for BridgeHandler {
     async fn on_recv_data(&self, client: &Client<Self>, data: MsgData<'_>) {
         let result = data::decode_message_match!(self, data, unpacked_data, {
             LoginOk(msg) => {
-                debug!("Received login confirmation from the central server");
+                info!("Received login confirmation from the central server");
 
                 let token_key = msg.get_token_key()?.to_str()?;
                 let token_expiry = Duration::from_secs(msg.get_token_expiry());
