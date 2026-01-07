@@ -57,9 +57,12 @@ mimalloc = { version = "0.1.48", optional = true }
 capnpc = "0.21.1"
 
 [features]
-default = ["tokio"]
-scripting = ["dep:mlua"]
 all = ["scripting"]
+default = ["tokio"]
+docker-build = []
+docker-alpine-build = ["mimalloc"]
+
+scripting = ["dep:mlua"]
 tokio_tracing = ["dep:tokio_tracing", "server-shared/tokio_tracing"]
 stat-tracking = []
 mimalloc = ["dep:mimalloc"]

@@ -78,6 +78,6 @@ docker save -o image.tar game-server:latest
 
 `<platform>` must be either `linux/amd64` (x86_64) or `linux/arm64`
 
-These builds include the `mimalloc` feature. The Github Actions builds are made with buildx and are identical to the builds produced in the `runtime-debian` image.
+Debian builds include no features, alpine builds include `mimalloc`. The Github Actions builds are made with buildx and are identical to the builds produced in the `runtime-debian` image.
 
 The `scripting` feature cannot be used in musl builds.

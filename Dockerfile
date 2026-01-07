@@ -47,12 +47,12 @@ RUN case "$TARGETARCH" in \
     esac
 
 # build dependencies
-RUN cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
+RUN cargo chef cook --release --zigbuild --target $(cat /target.txt) --features docker-alpine-build --recipe-path recipe.json
 
 # build the project
 COPY src ./src
 COPY Cargo.toml Cargo.lock ./
-RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
+RUN cargo zigbuild --release --features docker-alpine-build --target $(cat /target.txt)
 
 ## glibc builder ##
 FROM builder-base AS builder-glibc
@@ -66,12 +66,12 @@ RUN case "$TARGETARCH" in \
     esac
 
 # build dependencies
-RUN cargo chef cook --release --zigbuild --target $(cat /target.txt) --features mimalloc --recipe-path recipe.json
+RUN cargo chef cook --release --zigbuild --target $(cat /target.txt) --features docker-build --recipe-path recipe.json
 
 # build the project
 COPY src ./src
 COPY Cargo.toml Cargo.lock ./
-RUN cargo zigbuild --release --features mimalloc --target $(cat /target.txt)
+RUN cargo zigbuild --release --features docker-build --target $(cat /target.txt)
 
 ## alpine runtime ##
 FROM alpine:latest AS runtime-alpine
