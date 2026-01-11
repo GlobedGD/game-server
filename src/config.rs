@@ -168,6 +168,8 @@ pub struct Config {
     /// The path to the QDB file.
     #[serde(default)]
     pub qdb_path: Option<PathBuf>,
+    #[serde(default)]
+    pub enable_stat_tracking: bool,
 
     /// The tickrate of the server, which defines how often clients can (and will) send updates to the server when in a level.
     /// Bumping this from the default of 30 will proportionally increase bandwidth and CPU usage,
@@ -197,6 +199,7 @@ impl Default for Config {
             udp_address: default_udp_address(),
             udp_binds: default_udp_binds(),
             qdb_path: None,
+            enable_stat_tracking: false,
             log_file_enabled: default_log_file_enabled(),
             log_directory: default_log_directory(),
             console_log_level: default_log_level(),
@@ -275,6 +278,7 @@ impl Config {
         env_replace("GLOBED_GS_LOG_ROLLING", &mut self.log_rolling);
 
         env_replace("GLOBED_GS_QDB_PATH", &mut self.qdb_path);
+        env_replace("GLOBED_GS_ENABLE_STAT_TRACKING", &mut self.enable_stat_tracking);
 
         env_replace("GLOBED_GS_TICKRATE", &mut self.tickrate);
     }

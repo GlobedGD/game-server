@@ -96,9 +96,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let handler = ConnectionHandler::new(&config, data).await;
 
+    // try to ensure that this is a power of 2, and give at least 5 messages of leeway
+    let mut mlimit = config.tickrate.next_power_of_two() as u32;
+    if mlimit - (config.tickrate as u32) < 5 {
+        mlimit *= 2;
+    }
+
     let mut builder = server_shared::qunet::server::Server::builder()
         .with_memory_options(make_memory_limits(config.memory_usage))
-        .with_max_messages_per_second(config.tickrate + 10) // add 10 to account for various misc packets
+        .with_max_messages_per_second(mlimit)
         .with_app_handler(handler);
 
     if let Some(addr) = tcp_address {

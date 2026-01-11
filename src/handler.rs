@@ -158,9 +158,9 @@ impl AppHandler for ConnectionHandler {
         });
 
         #[cfg(feature = "stat-tracking")]
-        server.schedule(Duration::from_hours(24), |server| async move {
+        server.schedule(Duration::from_mins(30), |server| async move {
             if let Some(t) = server.stat_tracker() {
-                t.clear_past_older_than(Duration::from_hours(12));
+                t.clear_past_older_than(Duration::from_hours(2));
             }
         });
 
