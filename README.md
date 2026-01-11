@@ -15,7 +15,7 @@ Alternate ways of running the server include:
 
 ## Configuring
 
-Upon running the server for the first time, a `config.toml` file is created. TODO rest of this
+Check the [Server Hosting](https://github.com/GlobedGD/globed2/blob/main/docs/server-hosting.md) page for a proper configuration guide
 
 ## Building
 
