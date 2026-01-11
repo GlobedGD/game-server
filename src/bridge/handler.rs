@@ -4,12 +4,13 @@ use std::{
         OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::handler::ConnectionHandler;
 
 use super::{data, server_role::ServerRole};
+use parking_lot::Mutex;
 use server_shared::qunet::{
     client::{Client, ClientHandle, ConnectionError, EventHandler},
     message::MsgData,
@@ -23,11 +24,14 @@ pub struct BridgeHandler {
     authenticated: AtomicBool,
     server_handle: OnceLock<WeakServerHandle<ConnectionHandler>>,
     reconnect_attempt: AtomicUsize,
+    conn_started: Mutex<Option<Instant>>,
 }
 
 impl EventHandler for BridgeHandler {
     async fn on_connected(&self, client: &ClientHandle<Self>) {
         info!("Connected to the central server, logging in");
+
+        self.conn_started.lock().replace(Instant::now());
 
         self.reconnect_attempt.store(0, Ordering::Relaxed);
 
@@ -57,8 +61,24 @@ impl EventHandler for BridgeHandler {
     }
 
     async fn on_disconnected(&self, client: &ClientHandle<Self>) {
-        self.set_authenticated(false);
+        let was_authenticated = self.set_authenticated(false);
         self.server().handler().destroy_bridge_values();
+
+        let conn_duration =
+            self.conn_started.lock().take().map_or(Duration::ZERO, |start| start.elapsed());
+
+        // if we disconnected too quickly, wait before trying to reconnect (smaller deadline if was authenticated)
+        let deadline = if was_authenticated {
+            Duration::from_secs(2)
+        } else {
+            Duration::from_secs(5)
+        };
+
+        if conn_duration < deadline {
+            warn!("Connection aborted too quickly, reconnecting in 10 seconds...");
+            self.delay_reconnect(client, Duration::from_secs(10)).await;
+            return;
+        }
 
         warn!("Disconnected from the central server, attempting to reconnect...");
 
@@ -146,6 +166,7 @@ impl BridgeHandler {
             authenticated: AtomicBool::new(false),
             server_handle: OnceLock::new(),
             reconnect_attempt: AtomicUsize::new(0),
+            conn_started: Mutex::new(None),
         }
     }
 
@@ -172,8 +193,8 @@ impl BridgeHandler {
         self.authenticated.load(Ordering::Relaxed)
     }
 
-    fn set_authenticated(&self, authenticated: bool) {
-        self.authenticated.store(authenticated, Ordering::Relaxed);
+    fn set_authenticated(&self, authenticated: bool) -> bool {
+        self.authenticated.swap(authenticated, Ordering::Relaxed)
     }
 
     #[must_use]
@@ -182,15 +203,22 @@ impl BridgeHandler {
         client: &'a ClientHandle<Self>,
         err: ConnectionError,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        let attempt_count = self.reconnect_attempt.fetch_add(1, Ordering::Relaxed) + 1;
+        let wait_time = Duration::from_secs(2u64.pow(attempt_count.clamp(1, 6) as u32));
+
+        error!("Connection to central server failed, waiting {wait_time:?} and retrying: {err}");
+
+        self.delay_reconnect(client, wait_time)
+    }
+
+    #[must_use]
+    fn delay_reconnect<'a>(
+        &'a self,
+        client: &'a ClientHandle<Self>,
+        delay: Duration,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            let attempt_count = self.reconnect_attempt.fetch_add(1, Ordering::Relaxed) + 1;
-            let wait_time = Duration::from_secs(2u64.pow(attempt_count.clamp(1, 6) as u32));
-
-            error!(
-                "Connection to central server failed, waiting {wait_time:?} and retrying: {err}"
-            );
-
-            crate::tokio::time::sleep(wait_time).await;
+            crate::tokio::time::sleep(delay).await;
 
             if let Err(e) = client.clone().connect(&self.server_url) {
                 self.on_connection_error_helper(client, e).await;
