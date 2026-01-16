@@ -4,9 +4,13 @@
 use std::net::IpAddr;
 
 use self::tokio::io::{AsyncReadExt, AsyncWriteExt};
-use server_shared::qunet::server::{
-    ServerOutcome,
-    builder::{MemoryUsageOptions, UdpDiscoveryMode},
+use server_shared::qunet::{
+    message::CompressionType,
+    server::{
+        ServerOutcome,
+        builder::{MemoryUsageOptions, ShouldCompressFn, UdpDiscoveryMode},
+    },
+    transport::compression::lz4_compress,
 };
 use server_shared::{config::parse_addr, data::GameServerData, logging::setup_logger};
 use tracing::error;
@@ -105,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = server_shared::qunet::server::Server::builder()
         .with_memory_options(make_memory_limits(config.memory_usage))
         .with_max_messages_per_second(mlimit)
+        .with_compression_determinator(make_compression_func(config.compression_level))
         .with_app_handler(handler);
 
     if let Some(addr) = tcp_address {
@@ -174,4 +179,69 @@ async fn find_my_ip_address() -> anyhow::Result<IpAddr> {
     let ip_str = resp.split_at(resp.rfind('\n').expect("failed to find a newline")).1.trim();
 
     Ok(ip_str.parse::<IpAddr>()?)
+}
+
+fn make_compression_func(level: u32) -> impl ShouldCompressFn {
+    [
+        should_c_0,
+        should_c_1,
+        should_c_2,
+        should_c_3,
+        should_c_4::<256, 8192>,
+        should_c_4::<128, 1024>,
+        should_c_6,
+    ][level as usize]
+}
+
+fn should_c_0(_: &[u8]) -> Option<CompressionType> {
+    None
+}
+
+fn should_c_1(data: &[u8]) -> Option<CompressionType> {
+    if data.len() < 1024 { None } else { Some(CompressionType::Lz4) }
+}
+
+fn should_c_2(data: &[u8]) -> Option<CompressionType> {
+    if data.len() < 512 { None } else { Some(CompressionType::Lz4) }
+}
+
+fn should_c_3(data: &[u8]) -> Option<CompressionType> {
+    if data.len() < 256 { None } else { Some(CompressionType::Lz4) }
+}
+
+fn should_c_4<const MIN: usize, const ZSTD_BREAK: usize>(data: &[u8]) -> Option<CompressionType> {
+    if data.len() < MIN {
+        return None;
+    }
+
+    // adaptive, try compressing with lz4
+    let mut temp = [0u8; 8192];
+    let lz4_size = lz4_compress(data, &mut temp).unwrap_or(data.len() + 1);
+
+    // if lz4 is not effective at all, don't compress
+    if lz4_size >= data.len() && data.len() < ZSTD_BREAK {
+        return None;
+    }
+
+    // use zstd for large packets
+    if data.len() >= ZSTD_BREAK {
+        return Some(CompressionType::Zstd);
+    }
+
+    // use zstd if the packet is pretty compressible
+    if (lz4_size + lz4_size / 8) < data.len() {
+        Some(CompressionType::Zstd)
+    } else {
+        Some(CompressionType::Lz4)
+    }
+}
+
+fn should_c_6(data: &[u8]) -> Option<CompressionType> {
+    if data.len() < 128 {
+        None
+    } else if data.len() < 256 {
+        Some(CompressionType::Lz4)
+    } else {
+        Some(CompressionType::Zstd)
+    }
 }

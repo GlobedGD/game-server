@@ -8,9 +8,13 @@ use server_shared::config::env_replace;
 use thiserror::Error;
 use validator::{Validate, ValidationError};
 
-// Memory
+// Performance
 
 fn default_memory_usage() -> u32 {
+    3
+}
+
+fn default_compression_level() -> u32 {
     3
 }
 
@@ -93,6 +97,11 @@ pub struct Config {
     /// The memory usage value (1 to 11), determines how much memory the server will preallocate for operations.
     #[serde(default = "default_memory_usage")]
     pub memory_usage: u32,
+    /// How aggressive compression of data should be.
+    /// 0 means no compression, 6 means prefer zstd almost always.
+    #[serde(default = "default_compression_level")]
+    #[validate(range(min = 0, max = 6))]
+    pub compression_level: u32,
 
     /// URL of the central server to connect to
     #[serde(default)]
