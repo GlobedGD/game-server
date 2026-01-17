@@ -4,9 +4,12 @@ use std::sync::{
 };
 
 use parking_lot::Mutex;
-use server_shared::{MultiColor, UserSettings, data::PlayerIconData, token_issuer::TokenData};
+use server_shared::{
+    MultiColor, UserSettings, data::PlayerIconData, qunet::transport::RateLimiter,
+    token_issuer::TokenData,
+};
 
-use crate::{oneshot_rate_limiter::OneshotRateLimiter, session_manager::GameSession};
+use crate::session_manager::GameSession;
 
 #[derive(Debug)]
 pub struct SpecialUserData {
@@ -14,7 +17,6 @@ pub struct SpecialUserData {
     pub name_color: Option<MultiColor>,
 }
 
-#[derive(Default)]
 pub struct ClientData {
     account_data: OnceLock<TokenData>,
     session_id: AtomicU64,
@@ -24,8 +26,8 @@ pub struct ClientData {
     is_moderator: AtomicBool,
     deauthorized: AtomicBool,
     settings: Mutex<UserSettings>,
-    last_voice_msg: Mutex<OneshotRateLimiter<50>>,
-    last_quick_chat_msg: Mutex<OneshotRateLimiter<2000>>,
+    last_voice_msg: Mutex<RateLimiter>,
+    last_quick_chat_msg: Mutex<RateLimiter>,
 }
 
 impl ClientData {
@@ -128,10 +130,33 @@ impl ClientData {
     }
 
     pub fn try_voice_chat(&self) -> bool {
-        self.last_voice_msg.lock().try_acquire()
+        self.last_voice_msg.lock().consume()
     }
 
     pub fn try_quick_chat(&self) -> bool {
-        self.last_quick_chat_msg.lock().try_acquire()
+        self.last_quick_chat_msg.lock().consume()
+    }
+}
+
+/// How often to refill a token in the voice chat rate limiter
+/// A single audio frame is 60ms, so setting this to 50ms gives some leeway even when client audio buffer is 1 frame
+const VOICE_INTERVAL_NS: u64 = 50_000_000;
+/// How often to refill a token in the quick chat rate limiter (2 seconds)
+const QUICK_CHAT_INTERVAL_NS: u64 = 2_000_000_000;
+
+impl Default for ClientData {
+    fn default() -> Self {
+        Self {
+            account_data: OnceLock::new(),
+            session_id: AtomicU64::new(0),
+            session: Mutex::default(),
+            icons: Mutex::default(),
+            special_data: OnceLock::new(),
+            is_moderator: AtomicBool::new(false),
+            deauthorized: AtomicBool::new(false),
+            settings: Mutex::default(),
+            last_voice_msg: Mutex::new(RateLimiter::new_precise(VOICE_INTERVAL_NS, 5)),
+            last_quick_chat_msg: Mutex::new(RateLimiter::new_precise(QUICK_CHAT_INTERVAL_NS, 1)),
+        }
     }
 }

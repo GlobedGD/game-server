@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::HashSet,
     net::SocketAddr,
     sync::{Arc, OnceLock, Weak},
     time::{Duration, Instant},
@@ -37,6 +38,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     bridge::{Bridge, ServerRole},
     client_data::ClientData,
+    client_store::ClientStore,
     config::Config,
     data,
     events::*,
@@ -67,7 +69,7 @@ pub struct ConnectionHandler {
     roles: ArcSwap<Vec<ServerRole>>,
     session_manager: Arc<SessionManager>,
 
-    all_clients: DashMap<i32, WeakClientStateHandle>,
+    clients: ClientStore,
     all_rooms: DashMap<u32, CentralRoom>,
     user_cache: DashMap<i32, CachedUserData>,
 
@@ -201,9 +203,7 @@ impl AppHandler for ConnectionHandler {
         let account_id = client.account_id();
         if account_id != 0 {
             // remove only if the client has not been replaced by a newer login
-            self.all_clients.remove_if(&account_id, |_, current_client| {
-                Weak::ptr_eq(current_client, &Arc::downgrade(client))
-            });
+            self.clients.remove_if_same(account_id, client);
             self.delete_from_user_data_cache(account_id);
         }
     }
@@ -367,7 +367,7 @@ impl ConnectionHandler {
             roles: ArcSwap::default(),
             script_signer: ArcSwap::default(),
             session_manager: Arc::new(SessionManager::new()),
-            all_clients: DashMap::new(),
+            clients: ClientStore::new(),
             all_rooms: DashMap::new(),
             user_cache: DashMap::new(),
             tickrate: config.tickrate,
@@ -390,7 +390,7 @@ impl ConnectionHandler {
     }
 
     pub fn find_client(&self, id: i32) -> Option<ClientStateHandle> {
-        self.all_clients.get(&id).and_then(|x| x.upgrade())
+        self.clients.find(id)
     }
 
     pub fn find_account_data(&self, id: i32) -> Option<TokenData> {
@@ -471,14 +471,23 @@ impl ConnectionHandler {
     }
 
     pub fn cleanup_user_data_cache(&self) {
-        self.user_cache.retain(|id, entry| {
-            let elapsed = entry.accessed_at.elapsed();
-            if elapsed > Duration::from_hours(3) {
-                self.all_clients.contains_key(id)
-            } else {
-                true
+        let mut stale = HashSet::new();
+
+        for e in &mut self.user_cache.iter() {
+            let id = e.key();
+            let entry = e.value();
+
+            if entry.accessed_at.elapsed() > Duration::from_hours(3) {
+                stale.insert(*id);
             }
-        });
+        }
+
+        // only remove entries if they are not present in the client store
+        for id in stale {
+            if !self.clients.has(id) {
+                self.user_cache.remove(&id);
+            }
+        }
     }
 
     // Client api
@@ -525,19 +534,17 @@ impl ConnectionHandler {
     ) -> HandlerResult<()> {
         info!("[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id);
 
-        if let Some(old_client) =
-            self.all_clients.insert(token_data.account_id, Arc::downgrade(client))
-        {
+        if let Some(old_client) = self.clients.insert(token_data.account_id, client) {
             trace!("duplicate login detected for account ID {}", token_data.account_id);
 
             // there already was a client with this account ID, disconnect them
-            if let Some(old_client) = old_client.upgrade() {
-                if let Some(session) = old_client.deauthorize() {
-                    self.remove_from_session(&old_client, &session);
-                }
-
-                old_client.disconnect(Cow::Borrowed("Duplicate login detected, the same account logged in from a different location"));
+            if let Some(session) = old_client.deauthorize() {
+                self.remove_from_session(&old_client, &session);
             }
+
+            old_client.disconnect(Cow::Borrowed(
+                "Duplicate login detected, the same account logged in from a different location",
+            ));
         }
 
         // retrieve their roles

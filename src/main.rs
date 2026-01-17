@@ -28,11 +28,11 @@ pub use tokio_tracing as tokio;
 
 pub mod bridge;
 pub mod client_data;
+pub mod client_store;
 pub mod config;
 pub mod data;
 pub mod events;
 pub mod handler;
-pub mod oneshot_rate_limiter;
 pub mod player_state;
 #[cfg(feature = "scripting")]
 pub mod scripting;
