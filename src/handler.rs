@@ -21,6 +21,7 @@ use server_shared::qunet::{
         app_handler::{AppHandler, AppResult},
         client::ClientState,
     },
+    transport::QunetMessageOpts,
 };
 use server_shared::{
     SessionId, UserSettings,
@@ -1082,7 +1083,13 @@ impl ConnectionHandler {
         session.for_every_player_id(|id| {
             if id != client.account_id() {
                 if let Some(c) = self.find_client(id) {
-                    c.send_unreliable_data_bufkind(BufferKind::Reference(buf.clone()));
+                    c.send_data_bufkind_opts(
+                        BufferKind::Reference(buf.clone()),
+                        QunetMessageOpts {
+                            reliable: false,
+                            uncompressed: true,
+                        },
+                    );
                 }
             }
         });
