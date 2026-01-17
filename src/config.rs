@@ -194,6 +194,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             memory_usage: default_memory_usage(),
+            compression_level: default_compression_level(),
             central_server_url: String::new(),
             central_server_password: String::new(),
             quic_cert_path: None,
@@ -261,6 +262,7 @@ impl Config {
 
     fn replace_with_env(&mut self) {
         env_replace("GLOBED_GS_MEMORY_USAGE", &mut self.memory_usage);
+        env_replace("GLOBED_GS_COMPRESSION_LEVEL", &mut self.compression_level);
 
         env_replace("GLOBED_GS_CENTRAL_URL", &mut self.central_server_url);
         env_replace("GLOBED_GS_CENTRAL_PASSWORD", &mut self.central_server_password);
