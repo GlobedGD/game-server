@@ -59,8 +59,14 @@ pub enum OutEvent {
         player_id: i32,
     },
 
-    ActivePlayerSwitch {
-        player_id: i32,
+    // switcheroo
+    SwitcherooFullState {
+        active_player: i32,
+        flags: u8,
+    },
+
+    SwitcherooSwitch {
+        player: i32,
         r#type: u8,
     },
 }
@@ -78,7 +84,8 @@ impl OutEvent {
 
             Self::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
             Self::TwoPlayerUnlink { .. } => EVENT_2P_UNLINK,
-            Self::ActivePlayerSwitch { .. } => EVENT_ACTIVE_PLAYER_SWITCH,
+            Self::SwitcherooFullState { .. } => EVENT_SWITCHEROO_FULL_STATE,
+            Self::SwitcherooSwitch { .. } => EVENT_SWITCHEROO_SWITCH,
         }
     }
 
@@ -94,7 +101,8 @@ impl OutEvent {
 
             Self::TwoPlayerLinkRequest { .. } => 5,
             Self::TwoPlayerUnlink { .. } => 4,
-            Self::ActivePlayerSwitch { .. } => 5,
+            Self::SwitcherooFullState { .. } => 5,
+            Self::SwitcherooSwitch { .. } => 5,
         }
     }
 
@@ -219,8 +227,13 @@ impl OutEvent {
                 writer.write_i32(player_id);
             }
 
-            &Self::ActivePlayerSwitch { player_id, r#type } => {
-                writer.write_i32(player_id);
+            &Self::SwitcherooFullState { active_player, flags } => {
+                writer.write_i32(active_player);
+                writer.write_u8(flags);
+            }
+
+            &Self::SwitcherooSwitch { player, r#type } => {
+                writer.write_i32(player);
                 writer.write_u8(r#type);
             }
         }

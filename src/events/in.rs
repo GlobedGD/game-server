@@ -28,9 +28,14 @@ pub enum InEvent {
         player_id: i32,
     },
 
-    // the doggie commission event
-    ActivePlayerSwitch {
-        player_id: i32,
+    // switcheroo
+    SwitcherooFullState {
+        active_player: i32,
+        flags: u8,
+    },
+
+    SwitcherooSwitch {
+        player: i32,
         r#type: u8,
     },
 }
@@ -72,11 +77,21 @@ impl InEvent {
                 Ok(InEvent::TwoPlayerUnlink { player_id })
             }
 
-            EVENT_ACTIVE_PLAYER_SWITCH => {
+            EVENT_SWITCHEROO_FULL_STATE => {
                 let player_id = reader.read_i32()?;
+                let flags = reader.read_u8()?;
+
+                Ok(InEvent::SwitcherooFullState {
+                    active_player: player_id,
+                    flags,
+                })
+            }
+
+            EVENT_SWITCHEROO_SWITCH => {
+                let player = reader.read_i32()?;
                 let r#type = reader.read_u8()?;
 
-                Ok(InEvent::ActivePlayerSwitch { player_id, r#type })
+                Ok(InEvent::SwitcherooSwitch { player, r#type })
             }
 
             r#type @ 0..EVENT_GLOBED_BASE => {
@@ -122,7 +137,8 @@ impl InEvent {
 
             Self::TwoPlayerLinkRequest { .. } => EVENT_2P_LINK_REQUEST,
             Self::TwoPlayerUnlink { .. } => EVENT_2P_UNLINK,
-            Self::ActivePlayerSwitch { .. } => EVENT_ACTIVE_PLAYER_SWITCH,
+            Self::SwitcherooFullState { .. } => EVENT_SWITCHEROO_FULL_STATE,
+            Self::SwitcherooSwitch { .. } => EVENT_SWITCHEROO_SWITCH,
         }
     }
 }

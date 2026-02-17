@@ -903,8 +903,12 @@ impl ConnectionHandler {
                 );
             }
 
-            &InEvent::ActivePlayerSwitch { player_id, r#type } => {
-                session.push_event_to_all(OutEvent::ActivePlayerSwitch { player_id, r#type });
+            &InEvent::SwitcherooFullState { active_player, flags } => {
+                session.push_event_to_all(OutEvent::SwitcherooFullState { active_player, flags });
+            }
+
+            &InEvent::SwitcherooSwitch { player, r#type } => {
+                session.push_event_to_all(OutEvent::SwitcherooSwitch { player, r#type });
             }
 
             #[cfg(feature = "scripting")]
