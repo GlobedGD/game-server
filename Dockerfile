@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM debian:trixie-slim AS builder-tools
 
-ARG RUST_NIGHTLY_VERSION=nightly-2025-12-01
-ARG ZIG_VERSION=0.16.0-dev.1859+212968c57
+ARG RUST_NIGHTLY_VERSION=nightly-2025-02-01
+ARG ZIG_VERSION=0.15.2
 
 ENV CARGO_HOME=/cargo \
     RUSTUP_HOME=/rustup \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config ca-certificates curl xz-utils build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain ${RUST_NIGHTLY_VERSION} \
-    && curl -L https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | tar -xJ && mv zig-x86_64-linux-${ZIG_VERSION} /zig \
+    && curl -L https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz | tar -xJ && mv zig-x86_64-linux-${ZIG_VERSION} /zig \
     && cargo install --locked cargo-zigbuild --version 0.20.1 \
     && cargo install --locked cargo-chef --version 0.1.73 \
     && rustup target add \
