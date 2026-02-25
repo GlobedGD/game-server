@@ -1,6 +1,5 @@
-use server_shared::qunet::buffers::Bits;
-
 use super::*;
+use bitpiece::*;
 
 #[derive(Default, Clone)]
 pub struct SpawnInfo {
@@ -9,6 +8,15 @@ pub struct SpawnInfo {
     pub delay_variance: f32,
     pub ordered: bool,
     pub remaps: SmallVec<[u16; 6]>,
+}
+
+#[bitpiece]
+#[derive(Default)]
+struct SpawnInfoFlags {
+    has_delay: bool,
+    has_delay_variance: bool,
+    ordered: bool,
+    has_remaps: bool,
 }
 
 #[non_exhaustive]
@@ -134,28 +142,26 @@ impl OutEvent {
                 writer.write_u8(0); // flags, set later
                 writer.write_varuint(info.group_id as u64)?;
 
-                let mut bits = Bits::new(0u8);
+                let mut flags = SpawnInfoFlags::default();
 
                 if info.delay != 0.0 {
-                    bits.set_bit(0);
+                    flags.set_has_delay(true);
                     writer.write_f32(info.delay);
 
                     if info.delay_variance != 0.0 {
-                        bits.set_bit(1);
+                        flags.set_has_delay_variance(true);
                         writer.write_f32(info.delay_variance);
                     }
                 }
 
-                if info.ordered {
-                    bits.set_bit(2);
-                }
+                flags.set_ordered(info.ordered);
 
                 if !info.remaps.is_empty() {
                     if info.remaps.len() > 510 || !info.remaps.len().is_multiple_of(2) {
                         return Err(EventEncodeError::InvalidData);
                     }
 
-                    bits.set_bit(3);
+                    flags.set_has_remaps(true);
                     writer.write_u8((info.remaps.len() / 2) as u8);
 
                     for key in info.remaps.iter() {
@@ -164,7 +170,7 @@ impl OutEvent {
                 }
 
                 writer.perform_at(flags_pos, |w| {
-                    w.write_u8(bits.to_bits());
+                    w.write_u8(flags.to_bits());
                 });
             }
 
