@@ -269,12 +269,13 @@ impl AppHandler for ConnectionHandler {
 
 
                 let camera_range = CameraRange::new(msg.get_camera_x(), msg.get_camera_y(), msg.get_camera_radius());
+                let message_id = msg.get_message_id();
 
                 let events = { decode_event_array(msg)? };
 
                 unpacked_data.reset(); // free up memory
 
-                self.handle_player_data(client, data, &camera_range, reqs, &events).await
+                self.handle_player_data(client, data, &camera_range, reqs, &events, message_id).await
             },
 
             UpdateIcons(msg) => {
@@ -712,6 +713,7 @@ impl ConnectionHandler {
         camera_range: &CameraRange,
         requests: &[i32],
         events: &[InEvent],
+        message_id: u16,
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
@@ -744,7 +746,7 @@ impl ConnectionHandler {
 
         let event_capacity = out_events.iter().map(|x| x.estimate_bytes() + 2).sum::<usize>(); // 2 for type
 
-        let to_allocate = 88
+        let to_allocate = 96
             + player_count * BYTES_PER_PLAYER
             + requests.len() * BYTES_PER_REQUEST
             + event_capacity;
@@ -856,6 +858,8 @@ impl ConnectionHandler {
             if let Some(buf) = event_buf {
                 level_data.reborrow().set_event_data(&buf);
             }
+
+            level_data.set_message_id(message_id);
         })?;
 
         // events make the message reliable
