@@ -739,7 +739,7 @@ impl ConnectionHandler {
         session.update_player(data, &mut out_events);
 
         // TODO (high): adjust this
-        const BYTES_PER_PLAYER: usize = 120; // this is an overshoot, for ext data
+        const BYTES_PER_PLAYER: usize = 124; // this is an overshoot, for ext data
         const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67
 
         let player_count = session.player_count();

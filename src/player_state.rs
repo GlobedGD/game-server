@@ -89,6 +89,9 @@ pub struct ExtendedPlayerData {
     pub gravity_mod: f32,
     pub gravity: f32,
     pub touched_pad: bool,
+    pub maybe_falling: bool,
+    pub fall_speed: f32,
+    pub is_on_ground4: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, ConstDefault)]
@@ -129,11 +132,15 @@ impl ExtendedPlayerData {
         let is_on_ground2 = reader.get_is_on_ground2();
         let gravity_mod = reader.get_gravity_mod();
         let gravity = reader.get_gravity();
+        let maybe_falling = reader.get_maybe_falling();
+        let fall_speed = reader.get_fall_speed();
+        let is_on_ground4 = reader.get_is_on_ground4();
 
         if !acceleration.is_finite()
             || !fall_start_y.is_finite()
             || !gravity_mod.is_finite()
             || !gravity.is_finite()
+            || !fall_speed.is_finite()
         {
             return Err(DataDecodeError::InvalidFloat);
         }
@@ -149,6 +156,9 @@ impl ExtendedPlayerData {
             gravity_mod,
             gravity,
             touched_pad,
+            maybe_falling,
+            fall_speed,
+            is_on_ground4,
         })
     }
 
@@ -162,6 +172,9 @@ impl ExtendedPlayerData {
         builder.set_gravity_mod(self.gravity_mod);
         builder.set_gravity(self.gravity);
         builder.set_touched_pad(self.touched_pad);
+        builder.set_maybe_falling(self.maybe_falling);
+        builder.set_fall_speed(self.fall_speed);
+        builder.set_is_on_ground4(self.is_on_ground4);
     }
 }
 
