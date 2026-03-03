@@ -159,7 +159,7 @@ impl AppHandler for ConnectionHandler {
         });
 
         if server.stat_tracker().is_some() {
-            server.schedule(Duration::from_mins(30), |server| async move {
+            server.schedule(Duration::from_mins(29), |server| async move {
                 server.handler().dump_all_connections().await;
             });
         }
