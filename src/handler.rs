@@ -2,18 +2,15 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     net::SocketAddr,
+    path::Path,
     sync::{Arc, OnceLock, Weak},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
-#[cfg(feature = "stat-tracking")]
-use std::{path::Path, time::SystemTime};
 
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use build_time::build_time_utc;
 use dashmap::DashMap;
-#[cfg(feature = "stat-tracking")]
-use server_shared::qunet::server::stat_tracker::FinishedConnection;
 use server_shared::qunet::{
     buffers::{ByteReader, ByteWriter},
     message::{BufferKind, MsgData},
@@ -21,6 +18,7 @@ use server_shared::qunet::{
         Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
         app_handler::{AppHandler, AppResult},
         client::ClientState,
+        stat_tracker::{FinishedConnection, OverallStats},
     },
     transport::QunetMessageOpts,
 };
@@ -160,12 +158,11 @@ impl AppHandler for ConnectionHandler {
             server.handler().run_script_heartbeat();
         });
 
-        #[cfg(feature = "stat-tracking")]
-        server.schedule(Duration::from_mins(30), |server| async move {
-            if let Some(t) = server.stat_tracker() {
-                t.clear_past_older_than(Duration::from_hours(2));
-            }
-        });
+        if server.stat_tracker().is_some() {
+            server.schedule(Duration::from_mins(30), |server| async move {
+                server.handler().dump_all_connections().await;
+            });
+        }
 
         Ok(())
     }
@@ -321,32 +318,8 @@ impl AppHandler for ConnectionHandler {
         }
     }
 
-    #[cfg(feature = "stat-tracking")]
-    async fn on_sigusr1(&self, server: &QunetServer<Self>) {
-        let Some(st) = server.stat_tracker() else {
-            return;
-        };
-
-        let conns = st.take_all_past();
-        let base_dir = std::env::current_dir().unwrap().join("conn-dumps");
-
-        info!("Received SIGUSR1, dumping {} connections", conns.len());
-
-        for conn in conns {
-            // dump connection data
-            let time_str = format_systime(conn.creation);
-            let dir = base_dir.join(format!("{}-{}", time_str, conn.id));
-
-            match dump_connection_data(&conn, &dir).await {
-                Ok(()) => {
-                    info!("Dumped connection {} to {:?}", conn.id, dir);
-                }
-
-                Err(e) => {
-                    error!("Failed to dump connection {}: {}", conn.id, e);
-                }
-            }
-        }
+    async fn on_sigusr1(&self, _server: &QunetServer<Self>) {
+        self.dump_all_connections().await;
     }
 }
 
@@ -1176,6 +1149,46 @@ impl ConnectionHandler {
             client.data().try_quick_chat()
         })
     }
+
+    async fn dump_all_connections(&self) -> Option<OverallStats> {
+        let server = self.server();
+        let st = server.stat_tracker()?;
+
+        let conns = st.take_all_past();
+        let overall = st.get_overall_stats();
+
+        info!("== Overall connection stats ==");
+        info!("Bytes sent: {}, received: {}", overall.bytes_tx, overall.bytes_rx);
+        info!("Packets sent: {}, received: {}", overall.pkt_tx, overall.pkt_rx);
+        info!("Total connections made: {}", overall.total_conns);
+        info!(
+            "Connections suspended: {}, resumed: {}",
+            overall.total_suspends, overall.total_resumes
+        );
+        info!("Total keepalives exchanged: {}", overall.total_keepalives);
+
+        let base_dir = std::env::current_dir().unwrap().join("conn-dumps");
+
+        info!("Dumping {} connections to {base_dir:?}", conns.len());
+
+        for conn in conns {
+            // dump connection data
+            let time_str = format_systime(conn.creation);
+            let dir = base_dir.join(format!("{}-{}", time_str, conn.id));
+
+            match dump_connection_data(&conn, &dir).await {
+                Ok(()) => {
+                    info!("Dumped connection {} to {:?}", conn.id, dir);
+                }
+
+                Err(e) => {
+                    error!("Failed to dump connection {}: {}", conn.id, e);
+                }
+            }
+        }
+
+        Some(overall)
+    }
 }
 
 fn must_auth(client: &ClientState<ConnectionHandler>) -> HandlerResult<()> {
@@ -1270,7 +1283,6 @@ fn encode_event_array(events: &[OutEvent], writer: &mut ByteWriter<'_>) {
     }
 }
 
-#[cfg(feature = "stat-tracking")]
 fn format_systime(s: SystemTime) -> String {
     time_format::strftime_utc(
         "%Y-%m-%dT%H.%M.%S",
@@ -1279,12 +1291,10 @@ fn format_systime(s: SystemTime) -> String {
     .unwrap_or_else(|_| "unknown".to_string())
 }
 
-#[cfg(feature = "stat-tracking")]
 fn format_dur(d: Duration) -> String {
     format!("{:.3}s", d.as_secs_f64())
 }
 
-#[cfg(feature = "stat-tracking")]
 async fn dump_connection_data(conn: &FinishedConnection, dir: &Path) -> std::io::Result<()> {
     use tokio::{fs, io::AsyncWriteExt};
 

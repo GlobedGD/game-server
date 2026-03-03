@@ -61,5 +61,4 @@ docker-alpine-build = ["mimalloc"]
 
 scripting = ["dep:mlua"]
 tokio_tracing = ["dep:tokio_tracing", "server-shared/tokio_tracing"]
-stat-tracking = []
 mimalloc = ["dep:mimalloc"]
