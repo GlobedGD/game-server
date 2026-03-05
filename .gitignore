@@ -5,3 +5,6 @@ logs
 docker-target
 game-server-x64
 *.lua
+conn-dumps
+*.tar
+*.zst

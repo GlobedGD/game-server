@@ -150,6 +150,16 @@ impl EventHandler for BridgeHandler {
 
                 self.handle_notify_user_data(account_id, can_use_qc, can_use_voice, banned).await;
             },
+
+            NotifyKickUser(msg) => {
+                let account_id = msg.get_account_id();
+
+                unpacked_data.reset();
+
+                if let Some(user) = self.server().handler().find_client(account_id) {
+                    user.disconnect("disconnected by central server");
+                }
+            },
         });
 
         if let Err(e) = result {
