@@ -117,15 +117,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(addr) = udp_address {
-        builder = builder.with_udp_multiple(
-            addr,
-            if config.udp_ping_only {
-                UdpDiscoveryMode::Discovery
-            } else {
-                UdpDiscoveryMode::Both
-            },
-            config.udp_binds,
-        );
+        builder = builder
+            .with_udp_multiple(
+                addr,
+                if config.udp_ping_only {
+                    UdpDiscoveryMode::Discovery
+                } else {
+                    UdpDiscoveryMode::Both
+                },
+                config.udp_binds,
+            )
+            .with_udp_batching(true);
     }
 
     if let Some(path) = config.qdb_path
