@@ -4,9 +4,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use server_shared::config::env_replace;
+use server_shared::{config::env_replace, logging::LoggerConfig};
 use thiserror::Error;
-use validator::{Validate, ValidationError};
+use validator::Validate;
 
 // Performance
 
@@ -62,24 +62,11 @@ fn default_udp_binds() -> usize {
 
 // Logging
 
-fn default_log_file_enabled() -> bool {
-    true
-}
-
-fn default_log_directory() -> PathBuf {
-    "logs".into()
-}
-
-fn default_log_level() -> String {
-    "info".into()
-}
-
-fn default_log_filename() -> String {
-    "game-server.log".into()
-}
-
-fn default_log_rolling() -> bool {
-    false
+fn default_logging() -> LoggerConfig {
+    LoggerConfig {
+        filename: "game-server.log".to_owned(),
+        ..Default::default()
+    }
 }
 
 // Stuff
@@ -152,27 +139,9 @@ pub struct Config {
     #[validate(range(min = 1, max = 64))]
     pub udp_binds: usize,
 
-    /// Whether to enable logging to a file. If disabled, logs will only be printed to stdout.
-    #[serde(default = "default_log_file_enabled")]
-    pub log_file_enabled: bool,
-    /// The directory where logs will be stored.
-    #[serde(default = "default_log_directory")]
-    pub log_directory: PathBuf,
-    /// Minimum log level to print to the console. Logs below this level will be ignored. Possible values: 'trace', 'debug', 'info', 'warn', 'error'.
-    #[serde(default = "default_log_level")]
-    #[validate(custom(function = "validate_log_level"))]
-    pub console_log_level: String,
-    /// Minimum log level to print to the file. Logs below this level will be ignored. Possible values: 'trace', 'debug', 'info', 'warn', 'error'.
-    #[serde(default = "default_log_level")]
-    #[validate(custom(function = "validate_log_level"))]
-    pub file_log_level: String,
-    /// Prefix for the filename of the log file.
-    #[serde(default = "default_log_filename")]
-    pub log_filename: String,
-    /// Whether to roll the log file daily. If enabled, rather than overwriting the same log file on restart,
-    /// a new log file will be created with the current date appended to the filename.
-    #[serde(default = "default_log_rolling")]
-    pub log_rolling: bool,
+    /// Logging options
+    #[serde(default = "default_logging")]
+    pub logging: LoggerConfig,
 
     /// The path to the QDB file.
     #[serde(default)]
@@ -210,12 +179,7 @@ impl Default for Config {
             udp_binds: default_udp_binds(),
             qdb_path: None,
             enable_stat_tracking: false,
-            log_file_enabled: default_log_file_enabled(),
-            log_directory: default_log_directory(),
-            console_log_level: default_log_level(),
-            file_log_level: default_log_level(),
-            log_filename: default_log_filename(),
-            log_rolling: default_log_rolling(),
+            logging: default_logging(),
             tickrate: default_tickrate(),
             verify_script_signatures: default_verify_script_signatures(),
         }
@@ -281,23 +245,16 @@ impl Config {
         env_replace("GLOBED_GS_UDP_ADDRESS", &mut self.udp_address);
         env_replace("GLOBED_GS_UDP_BINDS", &mut self.udp_binds);
 
-        env_replace("GLOBED_GS_LOG_FILE_ENABLED", &mut self.log_file_enabled);
-        env_replace("GLOBED_GS_LOG_DIRECTORY", &mut self.log_directory);
-        env_replace("GLOBED_GS_CONSOLE_LOG_LEVEL", &mut self.console_log_level);
-        env_replace("GLOBED_GS_FILE_LOG_LEVEL", &mut self.file_log_level);
-        env_replace("GLOBED_GS_LOG_FILENAME", &mut self.log_filename);
-        env_replace("GLOBED_GS_LOG_ROLLING", &mut self.log_rolling);
+        env_replace("GLOBED_GS_LOG_FILE_ENABLED", &mut self.logging.file_enabled);
+        env_replace("GLOBED_GS_LOG_DIRECTORY", &mut self.logging.directory);
+        env_replace("GLOBED_GS_CONSOLE_LOG_LEVEL", &mut self.logging.console_level);
+        env_replace("GLOBED_GS_FILE_LOG_LEVEL", &mut self.logging.file_level);
+        env_replace("GLOBED_GS_LOG_FILENAME", &mut self.logging.filename);
+        env_replace("GLOBED_GS_LOG_ROLLING", &mut self.logging.rolling);
 
         env_replace("GLOBED_GS_QDB_PATH", &mut self.qdb_path);
         env_replace("GLOBED_GS_ENABLE_STAT_TRACKING", &mut self.enable_stat_tracking);
 
         env_replace("GLOBED_GS_TICKRATE", &mut self.tickrate);
-    }
-}
-
-fn validate_log_level(level: &str) -> Result<(), ValidationError> {
-    match level.to_lowercase().as_str() {
-        "trace" | "debug" | "info" | "warn" | "error" => Ok(()),
-        _ => Err(ValidationError::new("invalid log level")),
     }
 }

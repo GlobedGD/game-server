@@ -56,15 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let _guard = setup_logger(
-        config.log_rolling,
-        &config.log_directory,
-        &config.log_filename,
-        &config.console_log_level,
-        &config.file_log_level,
-        config.log_file_enabled,
-        config.memory_usage,
-    );
+    let _guard = setup_logger(&config.logging, config.memory_usage);
 
     if config.central_server_url.is_empty() {
         error!("Central server URL is not set, please set it in the config file.");
