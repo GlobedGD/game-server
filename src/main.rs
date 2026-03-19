@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut builder = server_shared::qunet::server::Server::builder()
         .with_memory_options(make_memory_limits(config.memory_usage))
-        // .with_max_messages_per_second(mlimit)
+        .with_max_messages_per_second(mlimit)
         .with_compression_determinator(make_compression_func(config.compression_level))
         .with_app_handler(handler);
 
