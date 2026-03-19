@@ -14,6 +14,7 @@ use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
 use tracing::trace;
 
+use crate::util::{iter_dashmap, iter_dashmap_mut};
 use crate::{
     events::*,
     handler::{ConnectionHandler, MAX_EVENT_COUNT},
@@ -319,7 +320,7 @@ impl GameSession {
     }
 
     pub fn for_every_player<F: FnMut(&GamePlayerState)>(&self, mut f: F) {
-        self.players.iter().for_each(|p| f(&p));
+        iter_dashmap(&self.players, |p| f(p.1));
     }
 
     pub fn for_every_player_id<F: FnMut(i32)>(&self, mut f: F) {
@@ -337,9 +338,9 @@ impl GameSession {
             self.counters.insert(item_id, value);
         }
 
-        for mut player in self.players.iter_mut() {
-            player.push_counter_change(item_id, value);
-        }
+        iter_dashmap_mut(&self.players, |p| {
+            p.1.push_counter_change(item_id, value);
+        });
     }
 
     pub fn notify_counter_change_one(&self, player: i32, item_id: u32, value: i32) -> bool {
@@ -362,9 +363,9 @@ impl GameSession {
     pub fn push_event_to_all(&self, event: OutEvent) {
         trace!(sid = self.id, "pushed event {} to all", event.type_int());
 
-        for mut player in self.players.iter_mut() {
-            player.push_event(event.clone());
-        }
+        iter_dashmap_mut(&self.players, |p| {
+            p.1.push_event(event.clone());
+        });
     }
 
     #[cfg(feature = "scripting")]
