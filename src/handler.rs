@@ -277,8 +277,8 @@ impl AppHandler for ConnectionHandler {
 
             UpdateIcons(msg) => {
                 let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
-                client.set_icons(icons);
-                Ok(())
+
+                self.handle_update_icons(client, icons)
             },
 
             UpdateUserSettings(msg) => {
@@ -677,6 +677,22 @@ impl ConnectionHandler {
         self.session_manager.delete_session_if_empty(session.id, session.editor_collab);
 
         self.emit_script_event(client, session, &InEvent::PlayerLeave(account_id));
+    }
+
+    fn handle_update_icons(
+        &self,
+        client: &ClientStateHandle,
+        icons: PlayerIconData,
+    ) -> HandlerResult<()> {
+        client.set_icons(icons);
+
+        if let Some(session) = client.session() {
+            session.push_event_to_all(OutEvent::DisplayDataRefreshed {
+                player_id: client.account_id(),
+            });
+        }
+
+        Ok(())
     }
 
     async fn handle_player_data(

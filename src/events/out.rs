@@ -22,6 +22,10 @@ struct SpawnInfoFlags {
 #[non_exhaustive]
 #[derive(Clone)]
 pub enum OutEvent {
+    DisplayDataRefreshed {
+        player_id: i32,
+    },
+
     CounterChange(CounterChangeEvent),
 
     SpawnGroup(SpawnInfo),
@@ -82,6 +86,7 @@ pub enum OutEvent {
 impl OutEvent {
     pub fn type_int(&self) -> u16 {
         match self {
+            Self::DisplayDataRefreshed { .. } => EVENT_DISPLAY_DATA_REFRESHED,
             Self::CounterChange(_) => EVENT_COUNTER_CHANGE,
             Self::SpawnGroup(_) => EVENT_SCR_SPAWN_GROUP,
             Self::SetItem { .. } => EVENT_SCR_SET_ITEM,
@@ -99,6 +104,7 @@ impl OutEvent {
 
     pub fn estimate_bytes(&self) -> usize {
         match self {
+            Self::DisplayDataRefreshed { .. } => 4,
             Self::CounterChange(_) => 8,
             Self::SpawnGroup(s) => 16 + s.remaps.len() * 8,
             Self::SetItem { .. } => 10,
@@ -116,6 +122,10 @@ impl OutEvent {
 
     pub fn encode(&self, writer: &mut ByteWriter) -> Result<(), EventEncodeError> {
         match self {
+            Self::DisplayDataRefreshed { player_id } => {
+                writer.write_i32(*player_id);
+            }
+
             Self::CounterChange(ev) => {
                 let raw_type = match ev.r#type {
                     CounterChangeType::Set(_) => 0,

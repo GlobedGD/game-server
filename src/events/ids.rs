@@ -2,6 +2,7 @@ pub const EVENT_GLOBED_BASE: u16 = 0xf000;
 pub const EVENT_COUNTER_CHANGE: u16 = 0xf001;
 pub const EVENT_PLAYER_JOIN: u16 = 0xf002;
 pub const EVENT_PLAYER_LEAVE: u16 = 0xf003;
+pub const EVENT_DISPLAY_DATA_REFRESHED: u16 = 0xf004;
 
 pub const EVENT_SCR_SPAWN_GROUP: u16 = 0xf010;
 pub const EVENT_SCR_SET_ITEM: u16 = 0xf011;
