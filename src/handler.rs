@@ -1186,7 +1186,7 @@ impl ConnectionHandler {
 
         if outcome != CanTalkOutcome::Allowed {
             debug!(
-                "[{} @ {}] got a chat message but user is not allowed to use chat ({outcome:?}",
+                "[{} @ {}] got a chat message but user is not allowed to use chat ({outcome:?})",
                 client.account_id(),
                 client.address
             );
