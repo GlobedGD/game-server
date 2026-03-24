@@ -11,10 +11,14 @@ use crate::handler::ConnectionHandler;
 
 use super::{data, server_role::ServerRole};
 use parking_lot::Mutex;
-use server_shared::qunet::{
-    client::{Client, ClientHandle, ConnectionError, EventHandler},
-    message::MsgData,
-    server::{ServerHandle as QunetServerHandle, WeakServerHandle},
+use server_shared::{
+    data::{SRVC_MAGIC, SRVC_PROTOCOL_VERSION, SrvUserData},
+    qunet::{
+        buffers::HeapByteWriter,
+        client::{Client, ClientHandle, ConnectionError, EventHandler},
+        message::MsgData,
+        server::{ServerHandle as QunetServerHandle, WeakServerHandle},
+    },
 };
 use tracing::{debug, error, info, warn};
 
@@ -34,6 +38,12 @@ impl EventHandler for BridgeHandler {
         self.conn_started.lock().replace(Instant::now());
 
         self.reconnect_attempt.store(0, Ordering::Relaxed);
+
+        // send srvc handshake
+        let mut writer = HeapByteWriter::new();
+        writer.write_u64(SRVC_MAGIC);
+        writer.write_u32(SRVC_PROTOCOL_VERSION);
+        client.send_data(writer.written());
 
         // authenticate
         let buf = data::encode_message_unsafe!(self, 512, msg => {
@@ -141,14 +151,11 @@ impl EventHandler for BridgeHandler {
             },
 
             NotifyUserData(msg) => {
-                let account_id = msg.get_account_id();
-                let can_use_qc = msg.get_can_use_quick_chat();
-                let can_use_voice = msg.get_can_use_voice();
-                let banned = msg.get_is_banned();
+                let data = SrvUserData::from_reader(msg.get_data()?)?;
 
                 unpacked_data.reset();
 
-                self.handle_notify_user_data(account_id, can_use_qc, can_use_voice, banned).await;
+                self.handle_notify_user_data(data).await;
             },
 
             NotifyKickUser(msg) => {
@@ -271,22 +278,16 @@ impl BridgeHandler {
         self.server().handler().remove_server_room(room_id);
     }
 
-    async fn handle_notify_user_data(
-        &self,
-        account_id: i32,
-        can_use_qc: bool,
-        can_use_voice: bool,
-        banned: bool,
-    ) {
+    async fn handle_notify_user_data(&self, data: SrvUserData) {
         let server = self.server();
         let handler = server.handler();
 
-        if banned {
-            if let Some(user) = handler.find_client(account_id) {
+        if data.is_banned {
+            if let Some(user) = handler.find_client(data.account_id) {
                 user.terminate();
             }
         } else {
-            handler.add_user_data_cache(account_id, can_use_qc, can_use_voice);
+            handler.add_user_data_cache(data);
         }
     }
 }

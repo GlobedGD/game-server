@@ -11,23 +11,26 @@ use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use build_time::build_time_utc;
 use dashmap::DashMap;
-use server_shared::qunet::{
-    buffers::{ByteReader, ByteWriter},
-    message::{BufferKind, MsgData},
-    server::{
-        Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
-        app_handler::{AppHandler, AppResult},
-        client::ClientState,
-        stat_tracker::{FinishedConnection, OverallStats},
-    },
-    transport::QunetMessageOpts,
-};
 use server_shared::{
     SessionId, UserSettings,
     data::{GameServerData, PlayerIconData},
     encoding::{DataDecodeError, EncodeMessageError},
     hmac_signer::HmacSigner,
     token_issuer::{TokenData, TokenIssuer},
+};
+use server_shared::{
+    data::SrvUserData,
+    qunet::{
+        buffers::{ByteReader, ByteWriter},
+        message::{BufferKind, MsgData},
+        server::{
+            Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
+            app_handler::{AppHandler, AppResult},
+            client::ClientState,
+            stat_tracker::{FinishedConnection, OverallStats},
+        },
+        transport::QunetMessageOpts,
+    },
 };
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -52,8 +55,7 @@ struct CentralRoom {
 
 #[derive(Clone, Debug)]
 struct CachedUserData {
-    pub can_use_qc: bool,
-    pub can_use_voice: bool,
+    pub data: SrvUserData,
     pub accessed_at: Instant,
 }
 
@@ -94,6 +96,16 @@ pub enum HandlerError {
 }
 
 type HandlerResult<T> = Result<T, HandlerError>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CanTalkOutcome {
+    Allowed,
+    Unknown,
+    NotLinked,
+    Muted,
+    RateLimited,
+    Disallowed,
+}
 
 pub struct BorrowedLevelScript<'a> {
     pub content: &'a str,
@@ -424,19 +436,17 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn add_user_data_cache(&self, account_id: i32, can_use_qc: bool, can_use_voice: bool) {
+    pub fn add_user_data_cache(&self, data: SrvUserData) {
         let now = Instant::now();
 
-        debug!("received user data ({account_id}), qc: {can_use_qc}, voice: {can_use_voice}");
+        debug!("received user data ({data:?})");
 
-        let mut entry = self.user_cache.entry(account_id).or_insert_with(|| CachedUserData {
-            can_use_qc: false,
-            can_use_voice: false,
+        let mut entry = self.user_cache.entry(data.account_id).or_insert_with(|| CachedUserData {
+            data: SrvUserData::default(),
             accessed_at: now,
         });
 
-        entry.can_use_voice = can_use_voice;
-        entry.can_use_qc = can_use_qc;
+        entry.data = data;
         entry.accessed_at = now;
     }
 
@@ -1140,30 +1150,65 @@ impl ConnectionHandler {
     }
 
     fn check_can_talk(&self, client: &ClientStateHandle, is_voice: bool) -> HandlerResult<bool> {
-        if !self
+        let outcome = self
             .get_cached_user(client.account_id())
-            .is_some_and(|x| if is_voice { x.can_use_voice } else { x.can_use_qc })
-        {
+            .map(|u| {
+                // 1. check rate limit
+                let able = if is_voice {
+                    client.data().try_voice_chat()
+                } else {
+                    client.data().try_quick_chat()
+                };
+
+                if !able {
+                    return CanTalkOutcome::RateLimited;
+                }
+
+                let allowed = if is_voice {
+                    u.data.can_use_voice
+                } else {
+                    u.data.can_use_quick_chat
+                };
+
+                if allowed {
+                    CanTalkOutcome::Allowed
+                } else if u.data.is_muted {
+                    CanTalkOutcome::Muted
+                } else if !u.data.is_linked {
+                    CanTalkOutcome::NotLinked
+                } else {
+                    // should never happen?
+                    CanTalkOutcome::Disallowed
+                }
+            })
+            // return unknown if we don't have any data yet
+            .unwrap_or(CanTalkOutcome::Unknown);
+
+        if outcome != CanTalkOutcome::Allowed {
             debug!(
-                "[{} @ {}] got a chat message but user is not allowed to use chat",
+                "[{} @ {}] got a chat message but user is not allowed to use chat ({outcome:?}",
                 client.account_id(),
                 client.address
             );
 
-            // send a message to the user telling them they are muted
             let buf = data::encode_message!(self, 48, msg => {
-                msg.reborrow().init_chat_not_permitted();
+                let mut nperm = msg.reborrow().init_chat_not_permitted();
+                nperm.set_is_voice(is_voice);
+                nperm.set_reason(match outcome {
+                    CanTalkOutcome::NotLinked => data::ChatNotPermittedReason::NotLinked,
+                    CanTalkOutcome::Muted => data::ChatNotPermittedReason::Muted,
+                    CanTalkOutcome::RateLimited => data::ChatNotPermittedReason::RateLimited,
+                    CanTalkOutcome::Unknown => data::ChatNotPermittedReason::Unknown,
+                    CanTalkOutcome::Disallowed => data::ChatNotPermittedReason::Disallowed,
+                    CanTalkOutcome::Allowed => unreachable!(),
+                });
             })?;
             client.send_data_bufkind(buf);
 
             return Ok(false);
         }
 
-        Ok(if is_voice {
-            client.data().try_voice_chat()
-        } else {
-            client.data().try_quick_chat()
-        })
+        Ok(true)
     }
 
     async fn dump_all_connections(&self) -> Option<OverallStats> {
