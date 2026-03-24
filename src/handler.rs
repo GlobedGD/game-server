@@ -91,8 +91,6 @@ pub enum HandlerError {
     Encoder(#[from] EncodeMessageError),
     #[error("cannot handle this message while unauthorized")]
     Unauthorized,
-    #[error("spoofed account ID inside player data message")]
-    SpoofedAccountId,
 }
 
 type HandlerResult<T> = Result<T, HandlerError>;
@@ -708,7 +706,7 @@ impl ConnectionHandler {
     async fn handle_player_data(
         &self,
         client: &ClientStateHandle,
-        data: PlayerState,
+        mut data: PlayerState,
         camera_range: &CameraRange,
         requests: &[i32],
         events: &[InEvent],
@@ -716,11 +714,9 @@ impl ConnectionHandler {
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
-        let account_id = data.account_id;
-
-        if account_id != client.account_id() {
-            return Err(HandlerError::SpoofedAccountId);
-        }
+        // disallow account id spoofing
+        let account_id = client.account_id();
+        data.account_id = account_id;
 
         let Some(session) = client.session() else {
             debug!("[{}] tried to send player data while not in a session", client.address);
