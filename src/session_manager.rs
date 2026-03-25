@@ -256,9 +256,9 @@ impl GameSession {
             ..Default::default()
         };
 
-        for ent in self.counters.iter() {
-            state.push_counter_change(*ent.key(), *ent.value());
-        }
+        iter_dashmap(&self.counters, |(key, value)| {
+            state.push_counter_change(*key, *value);
+        });
 
         self.players.insert(player_id, state);
         self.player_ids.lock().insert(player_id);
