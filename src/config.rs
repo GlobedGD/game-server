@@ -43,6 +43,7 @@ fn default_tcp_address() -> String {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct TcpConfig {
     /// Whether to enable incoming TCP connections. This requires the "address" option to be set.
     #[serde(default = "default_enable_tcp")]
@@ -79,6 +80,7 @@ fn default_udp_binds() -> usize {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct UdpConfig {
     /// Whether to enable incoming UDP connections. This requires the "address" option to be set.
     #[serde(default = "default_enable_udp")]
@@ -127,6 +129,7 @@ fn default_verify_script_signatures() -> bool {
 }
 
 #[derive(Debug, Deserialize, Serialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// The memory usage value (1 to 11), determines how much memory the server will preallocate for operations.
     #[serde(default = "default_memory_usage")]
