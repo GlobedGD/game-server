@@ -1,10 +1,11 @@
 use dashmap::DashMap;
+use nohash_hasher::BuildNoHashHasher;
 
 use crate::events::{CounterChangeEvent, CounterChangeType};
 
 #[derive(Default)]
 pub struct TriggerManager {
-    values: DashMap<u32, i32>,
+    pub values: DashMap<u32, i32, BuildNoHashHasher<u32>>,
 }
 
 impl TriggerManager {
@@ -33,6 +34,11 @@ impl TriggerManager {
             }
         }
 
-        (event.item_id, *entry)
+        let new_value = *entry;
+        if new_value == 0 {
+            self.values.remove(&event.item_id);
+        }
+
+        (event.item_id, new_value)
     }
 }

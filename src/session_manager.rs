@@ -170,9 +170,8 @@ pub struct GameSession {
     pub editor_collab: bool,
 
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
-    counters: DashMap<u32, i32, BuildNoHashHasher<u32>>,
     player_ids: Mutex<FxHashSet<i32>>,
-    triggers: TriggerManager,
+    triggers: OnceLock<TriggerManager>,
     manager: Weak<SessionManager>,
 
     #[allow(unused)]
@@ -198,9 +197,8 @@ impl GameSession {
             platformer,
             editor_collab,
             players: DashMap::default(),
-            counters: DashMap::default(),
             player_ids: Mutex::new(FxHashSet::default()),
-            triggers: TriggerManager::default(),
+            triggers: OnceLock::new(),
             created_at: Instant::now(),
             manager: Arc::downgrade(manager),
             #[cfg(feature = "scripting")]
@@ -211,7 +209,7 @@ impl GameSession {
     }
 
     pub fn triggers(&self) -> &TriggerManager {
-        &self.triggers
+        self.triggers.get_or_init(TriggerManager::default)
     }
 
     pub fn manager(&self) -> Arc<SessionManager> {
@@ -256,9 +254,11 @@ impl GameSession {
             ..Default::default()
         };
 
-        iter_dashmap(&self.counters, |(key, value)| {
-            state.push_counter_change(*key, *value);
-        });
+        if let Some(triggers) = self.triggers.get() {
+            iter_dashmap(&triggers.values, |(key, value)| {
+                state.push_counter_change(*key, *value);
+            });
+        };
 
         self.players.insert(player_id, state);
         self.player_ids.lock().insert(player_id);
@@ -332,12 +332,6 @@ impl GameSession {
     }
 
     pub fn notify_counter_change(&self, item_id: u32, value: i32) {
-        if value == 0 {
-            self.counters.remove(&item_id);
-        } else {
-            self.counters.insert(item_id, value);
-        }
-
         iter_dashmap_mut(&self.players, |p| {
             p.1.push_counter_change(item_id, value);
         });

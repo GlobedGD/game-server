@@ -437,7 +437,7 @@ impl ConnectionHandler {
     pub fn add_user_data_cache(&self, data: SrvUserData) {
         let now = Instant::now();
 
-        debug!("received user data ({data:?})");
+        trace!("received user data ({data:?})");
 
         let mut entry = self.user_cache.entry(data.account_id).or_insert_with(|| CachedUserData {
             data: SrvUserData::default(),
@@ -514,7 +514,10 @@ impl ConnectionHandler {
         icons: PlayerIconData,
         settings: UserSettings,
     ) -> HandlerResult<()> {
-        info!("[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id);
+        info!(
+            cid = client.connection_id,
+            "[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id
+        );
 
         if let Some(old_client) = self.clients.insert(token_data.account_id, client) {
             trace!("duplicate login detected for account ID {}", token_data.account_id);
