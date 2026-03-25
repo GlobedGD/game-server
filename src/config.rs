@@ -42,6 +42,24 @@ fn default_tcp_address() -> String {
     "[::]:4349".into()
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, Validate)]
+pub struct TcpConfig {
+    /// Whether to enable incoming TCP connections. This requires the "address" option to be set.
+    #[serde(default = "default_enable_tcp")]
+    pub enable: bool,
+    #[serde(default = "default_tcp_address")]
+    pub address: String,
+}
+
+impl Default for TcpConfig {
+    fn default() -> Self {
+        Self {
+            enable: default_enable_tcp(),
+            address: default_tcp_address(),
+        }
+    }
+}
+
 // UDP
 
 fn default_enable_udp() -> bool {
@@ -58,6 +76,35 @@ fn default_udp_address() -> String {
 
 fn default_udp_binds() -> usize {
     1
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Validate)]
+pub struct UdpConfig {
+    /// Whether to enable incoming UDP connections. This requires the "address" option to be set.
+    #[serde(default = "default_enable_udp")]
+    pub enable: bool,
+    /// Whether to use UDP solely for "Discovery" (ping) purposes. New connections will not be established if this is enabled.
+    /// Note: `enable_udp` must be enabled for this to have any effect, otherwise pings will be ignored.
+    #[serde(default = "default_udp_ping_only")]
+    pub ping_only: bool,
+    /// The address to listen for UDP connections or pings on.
+    #[serde(default = "default_udp_address")]
+    pub address: String,
+    /// How many UDP sockets to bind. This is useful for load balancing on multi-core systems,
+    /// but it does not work on Windows systems, and it is only useful when managing a large number of UDP connections.
+    #[validate(range(min = 1, max = 64))]
+    pub binds: usize,
+}
+
+impl Default for UdpConfig {
+    fn default() -> Self {
+        Self {
+            enable: default_enable_udp(),
+            ping_only: default_udp_ping_only(),
+            address: default_udp_address(),
+            binds: default_udp_binds(),
+        }
+    }
 }
 
 // Logging
@@ -116,28 +163,10 @@ pub struct Config {
     #[serde(default)]
     pub server_address: Option<String>,
 
-    /// Whether to enable incoming TCP connections. This requires the "tcp_address" parameter to be set.
-    #[serde(default = "default_enable_tcp")]
-    pub enable_tcp: bool,
-    /// The address to listen for TCP connections on.
-    #[serde(default = "default_tcp_address")]
-    pub tcp_address: String,
-
-    /// Whether to enable incoming UDP connections. This requires the "udp_address" parameter to be set.
-    #[serde(default = "default_enable_udp")]
-    pub enable_udp: bool,
-    /// Whether to use UDP solely for "Discovery" (ping) purposes. New connections will not be established if this is enabled.
-    /// Note: `enable_udp` must be enabled for this to have any effect, otherwise pings will be ignored.
-    #[serde(default = "default_udp_ping_only")]
-    pub udp_ping_only: bool,
-    /// The address to listen for UDP connections or pings on.
-    #[serde(default = "default_udp_address")]
-    pub udp_address: String,
-    /// How many UDP sockets to bind. This is useful for load balancing on multi-core systems,
-    /// but it does not work on Windows systems, and it is only useful when managing a large number of UDP connections.
-    #[serde(default = "default_udp_binds")]
-    #[validate(range(min = 1, max = 64))]
-    pub udp_binds: usize,
+    #[serde(default)]
+    pub tcp: TcpConfig,
+    #[serde(default)]
+    pub udp: UdpConfig,
 
     /// Logging options
     #[serde(default = "default_logging")]
@@ -171,12 +200,8 @@ impl Default for Config {
             server_id: default_server_id(),
             server_region: default_server_region(),
             server_address: None,
-            enable_tcp: default_enable_tcp(),
-            tcp_address: default_tcp_address(),
-            enable_udp: default_enable_udp(),
-            udp_ping_only: default_udp_ping_only(),
-            udp_address: default_udp_address(),
-            udp_binds: default_udp_binds(),
+            tcp: TcpConfig::default(),
+            udp: UdpConfig::default(),
             qdb_path: None,
             enable_stat_tracking: false,
             logging: default_logging(),
@@ -237,13 +262,13 @@ impl Config {
         env_replace("GLOBED_GS_SERVER_REGION", &mut self.server_region);
         env_replace("GLOBED_GS_SERVER_ADDRESS", &mut self.server_address);
 
-        env_replace("GLOBED_GS_ENABLE_TCP", &mut self.enable_tcp);
-        env_replace("GLOBED_GS_TCP_ADDRESS", &mut self.tcp_address);
+        env_replace("GLOBED_GS_ENABLE_TCP", &mut self.tcp.enable);
+        env_replace("GLOBED_GS_TCP_ADDRESS", &mut self.tcp.address);
 
-        env_replace("GLOBED_GS_ENABLE_UDP", &mut self.enable_udp);
-        env_replace("GLOBED_GS_UDP_PING_ONLY", &mut self.udp_ping_only);
-        env_replace("GLOBED_GS_UDP_ADDRESS", &mut self.udp_address);
-        env_replace("GLOBED_GS_UDP_BINDS", &mut self.udp_binds);
+        env_replace("GLOBED_GS_ENABLE_UDP", &mut self.udp.enable);
+        env_replace("GLOBED_GS_UDP_PING_ONLY", &mut self.udp.ping_only);
+        env_replace("GLOBED_GS_UDP_ADDRESS", &mut self.udp.address);
+        env_replace("GLOBED_GS_UDP_BINDS", &mut self.udp.binds);
 
         env_replace("GLOBED_GS_LOG_FILE_ENABLED", &mut self.logging.file_enabled);
         env_replace("GLOBED_GS_LOG_DIRECTORY", &mut self.logging.directory);

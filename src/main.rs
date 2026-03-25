@@ -64,9 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let tcp_address = config.enable_tcp.then(|| parse_addr(&config.tcp_address, "tcp_address"));
+    let tcp_address = config.tcp.enable.then(|| parse_addr(&config.tcp.address, "tcp_address"));
 
-    let udp_address = config.enable_udp.then(|| parse_addr(&config.udp_address, "udp_address"));
+    let udp_address = config.udp.enable.then(|| parse_addr(&config.udp.address, "udp_address"));
 
     // if the public facing address is not set, let's try to find it ourselves
     let server_address = if let Some(addr) = &config.server_address {
@@ -113,12 +113,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder
             .with_udp_multiple(
                 addr,
-                if config.udp_ping_only {
+                if config.udp.ping_only {
                     UdpDiscoveryMode::Discovery
                 } else {
                     UdpDiscoveryMode::Both
                 },
-                config.udp_binds,
+                config.udp.binds,
             )
             .with_udp_batching(true);
     }
