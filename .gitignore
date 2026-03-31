@@ -8,3 +8,4 @@ game-server-x64
 conn-dumps
 *.tar
 *.zst
+qdbs
