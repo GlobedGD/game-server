@@ -29,6 +29,7 @@ pub struct BridgeHandler {
     server_handle: OnceLock<WeakServerHandle<ConnectionHandler>>,
     reconnect_attempt: AtomicUsize,
     conn_started: Mutex<Option<Instant>>,
+    scheduled_status: AtomicBool,
 }
 
 impl EventHandler for BridgeHandler {
@@ -68,6 +69,32 @@ impl EventHandler for BridgeHandler {
         };
 
         client.send_data_bufkind(buf);
+
+        // schedule a status message to be sent every once in a while
+        if !self.scheduled_status.swap(true, Ordering::Relaxed) {
+            let client = client.clone();
+            let server = self.server();
+
+            crate::tokio::spawn(async move {
+                let mut interval = crate::tokio::time::interval(Duration::from_secs(30));
+                interval.tick().await;
+
+                loop {
+                    interval.tick().await;
+
+                    let data = server.handler().get_status_data();
+
+                    let buf = data::encode_message_unsafe!(client.handler(), 128, msg => {
+                        data.encode(msg.init_status());
+                    })
+                    .expect("failed to encode status message");
+
+                    if client.connected() {
+                        client.send_data_bufkind(buf);
+                    }
+                }
+            });
+        }
     }
 
     async fn on_disconnected(&self, client: &ClientHandle<Self>) {
@@ -184,6 +211,7 @@ impl BridgeHandler {
             server_handle: OnceLock::new(),
             reconnect_attempt: AtomicUsize::new(0),
             conn_started: Mutex::new(None),
+            scheduled_status: AtomicBool::new(false),
         }
     }
 

@@ -87,6 +87,10 @@ impl SessionManager {
     pub fn lock_heartbeats(&self) -> parking_lot::MutexGuard<'_, FxHashSet<Arc<GameSession>>> {
         self.heartbeats.lock()
     }
+
+    pub fn count(&self) -> usize {
+        self.sessions.len() + self.ec_sessions.len()
+    }
 }
 
 #[cfg(feature = "scripting")]

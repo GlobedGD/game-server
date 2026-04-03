@@ -3,7 +3,10 @@ use std::{
     collections::HashSet,
     net::SocketAddr,
     path::Path,
-    sync::{Arc, OnceLock, Weak},
+    sync::{
+        Arc, OnceLock, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant, SystemTime},
 };
 
@@ -13,7 +16,7 @@ use build_time::build_time_utc;
 use dashmap::DashMap;
 use server_shared::{
     SessionId, UserSettings,
-    data::{GameServerData, PlayerIconData},
+    data::{GameServerData, PlayerIconData, SrvStatusData},
     encoding::{DataDecodeError, EncodeMessageError},
     hmac_signer::HmacSigner,
     token_issuer::{TokenData, TokenIssuer},
@@ -74,6 +77,9 @@ pub struct ConnectionHandler {
     user_cache: DashMap<i32, CachedUserData>,
 
     tickrate: usize,
+
+    total_connections: AtomicU64,
+    total_data_messages: AtomicU64,
 
     #[cfg(feature = "scripting")]
     verify_script_signatures: bool,
@@ -355,6 +361,8 @@ impl ConnectionHandler {
             all_rooms: DashMap::new(),
             user_cache: DashMap::new(),
             tickrate: config.tickrate,
+            total_connections: AtomicU64::new(0),
+            total_data_messages: AtomicU64::new(0),
             #[cfg(feature = "scripting")]
             verify_script_signatures: config.verify_script_signatures,
         }
@@ -518,6 +526,8 @@ impl ConnectionHandler {
             cid = client.connection_id,
             "[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id
         );
+
+        self.total_connections.fetch_add(1, Ordering::Relaxed);
 
         if let Some(old_client) = self.clients.insert(token_data.account_id, client) {
             trace!("duplicate login detected for account ID {}", token_data.account_id);
@@ -716,6 +726,8 @@ impl ConnectionHandler {
         message_id: u16,
     ) -> HandlerResult<()> {
         must_auth(client)?;
+
+        self.total_data_messages.fetch_add(1, Ordering::Relaxed);
 
         // disallow account id spoofing
         let account_id = client.account_id();
@@ -1248,6 +1260,17 @@ impl ConnectionHandler {
         }
 
         Some(overall)
+    }
+
+    pub fn get_status_data(&self) -> SrvStatusData {
+        SrvStatusData {
+            clients: self.server().client_count() as u32,
+            auth_clients: self.clients.count() as u32,
+            rooms: self.all_rooms.len() as u32,
+            sessions: self.session_manager.count() as u32,
+            total_connections: self.total_connections.load(Ordering::Relaxed),
+            total_data_messages: self.total_data_messages.load(Ordering::Relaxed),
+        }
     }
 }
 
