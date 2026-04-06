@@ -135,9 +135,9 @@ pub struct Config {
     #[serde(default = "default_memory_usage")]
     pub memory_usage: u32,
     /// How aggressive compression of data should be.
-    /// 0 means no compression, 6 means prefer zstd almost always.
+    /// 0 means no compression, 7 means prefer zstd almost always.
     #[serde(default = "default_compression_level")]
-    #[validate(range(min = 0, max = 6))]
+    #[validate(range(min = 0, max = 7))]
     pub compression_level: u32,
 
     /// URL of the central server to connect to

@@ -182,6 +182,7 @@ fn make_compression_func(level: u32) -> impl ShouldCompressFn {
         should_c_4::<256, 8192>,
         should_c_4::<128, 1024>,
         should_c_6,
+        should_c_7,
     ][level as usize]
 }
 
@@ -245,4 +246,8 @@ fn should_c_6(data: &[u8]) -> Option<CompressionType> {
     } else {
         Some(CompressionType::Zstd)
     }
+}
+
+fn should_c_7(data: &[u8]) -> Option<CompressionType> {
+    if data.len() < 128 { None } else { Some(CompressionType::Zstd) }
 }
