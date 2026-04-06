@@ -169,11 +169,6 @@ impl AppHandler for ConnectionHandler {
             server.handler().cleanup_user_data_cache();
         });
 
-        #[cfg(feature = "scripting")]
-        server.schedule(Duration::from_secs_f32(1.0 / self.tickrate as f32), |server| async move {
-            server.handler().run_script_heartbeat();
-        });
-
         if server.stat_tracker().is_some() {
             server.schedule(Duration::from_mins(7), |server| async move {
                 server.handler().dump_all_connections().await;
@@ -979,19 +974,6 @@ impl ConnectionHandler {
                 "[{}] received a scripted event with type {type} but no script is set",
                 client.address
             );
-        }
-    }
-
-    #[cfg(feature = "scripting")]
-    fn run_script_heartbeat(&self) {
-        let sessions = self.session_manager.lock_heartbeats();
-
-        for s in sessions.iter() {
-            let Some(scripting) = s.scripting() else {
-                continue;
-            };
-
-            scripting.handle_heartbeat();
         }
     }
 

@@ -34,7 +34,6 @@ use {
 pub struct SessionManager {
     sessions: DashMap<u64, Arc<GameSession>>,
     ec_sessions: DashMap<u64, Arc<GameSession>>,
-    heartbeats: Mutex<FxHashSet<Arc<GameSession>>>,
     server: OnceLock<WeakServerHandle<ConnectionHandler>>,
 }
 
@@ -43,7 +42,6 @@ impl SessionManager {
         Self {
             sessions: DashMap::new(),
             ec_sessions: DashMap::new(),
-            heartbeats: Mutex::default(),
             server: OnceLock::new(),
         }
     }
@@ -76,16 +74,8 @@ impl SessionManager {
         if let Some((_, session)) =
             map.remove_if(&session_id, |_, session| session.players.is_empty())
         {
-            self.heartbeats.lock().remove(&session);
+            let _ = session;
         }
-    }
-
-    pub fn schedule_heartbeat(&self, session: &Arc<GameSession>) {
-        self.heartbeats.lock().insert(session.clone());
-    }
-
-    pub fn lock_heartbeats(&self) -> parking_lot::MutexGuard<'_, FxHashSet<Arc<GameSession>>> {
-        self.heartbeats.lock()
     }
 
     pub fn count(&self) -> usize {
