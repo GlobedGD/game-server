@@ -46,7 +46,7 @@ use crate::{
     config::Config,
     data,
     events::*,
-    player_state::{CameraRange, PlayerState},
+    player_state::{CameraRange, PlayerLevelMeta, PlayerState},
     session_manager::{GameSession, SessionManager},
     voice_message::VoiceMessage,
 };
@@ -284,6 +284,21 @@ impl AppHandler for ConnectionHandler {
                 unpacked_data.reset(); // free up memory
 
                 self.handle_player_data(client, data, &camera_range, reqs, &events, message_id).await
+            },
+
+            PlayerUpdateMeta(msg) => {
+                let meta = PlayerLevelMeta::from_reader(msg.get_meta()?)?;
+
+                let mut requests = [0i32; 256];
+                let reqs = {
+                    let in_reqs = msg.get_requests()?;
+                    for (i, val) in in_reqs.iter().take(256).enumerate() {
+                        requests[i] = val;
+                    }
+                    &requests[..(in_reqs.len().min(256u32) as usize)]
+                };
+
+                self.handle_player_update_meta(client, meta, reqs).await
             },
 
             UpdateIcons(msg) => {
@@ -873,6 +888,38 @@ impl ConnectionHandler {
         } else {
             client.send_data_bufkind(buf);
         }
+
+        Ok(())
+    }
+
+    async fn handle_player_update_meta(
+        &self,
+        client: &ClientStateHandle,
+        meta: PlayerLevelMeta,
+        requests: &[i32],
+    ) -> HandlerResult<()> {
+        must_auth(client)?;
+
+        let Some(session) = client.session() else {
+            debug!("[{}] tried to send player data while not in a session", client.address);
+            return Ok(());
+        };
+
+        session.update_meta(client.account_id(), meta);
+
+        let to_allocate = 64 + requests.len() * 16; // rough estimate
+        let buf = data::encode_message_heap!(self, to_allocate, msg => {
+            let mut level_meta = msg.init_level_meta();
+            let _ = level_meta.reborrow().set_ids(requests);
+
+            let mut reqs_data = level_meta.reborrow().init_metas(requests.len() as u32);
+            for (i, req) in requests.iter().enumerate() {
+                let meta = session.get_player_meta(*req).unwrap_or_default();
+                meta.encode(reqs_data.reborrow().get(i as u32));
+            }
+        })?;
+
+        client.send_data_bufkind(buf);
 
         Ok(())
     }

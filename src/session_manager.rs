@@ -14,6 +14,7 @@ use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
 use tracing::trace;
 
+use crate::player_state::PlayerLevelMeta;
 use crate::util::{iter_dashmap, iter_dashmap_mut};
 use crate::{
     events::*,
@@ -102,6 +103,7 @@ struct UnreadValue {
 #[derive(Default)]
 pub struct GamePlayerState {
     pub state: PlayerState,
+    pub meta: PlayerLevelMeta,
     pub wants_hidden: bool,
 
     unread_counter_values: FxHashMap<u32, UnreadValue>,
@@ -113,6 +115,7 @@ impl GamePlayerState {
     pub fn new(state: PlayerState) -> Self {
         Self {
             state,
+            meta: PlayerLevelMeta::default(),
             unread_counter_values: FxHashMap::default(),
             unread_events: VecDeque::new(),
             prio_counter: 0,
@@ -309,8 +312,18 @@ impl GameSession {
         }
     }
 
+    pub fn update_meta(&self, account_id: i32, meta: PlayerLevelMeta) {
+        if let Some(mut player) = self.players.get_mut(&account_id) {
+            player.meta = meta;
+        }
+    }
+
     pub fn get_player_state(&self, account_id: i32) -> Option<PlayerState> {
         self.players.get(&account_id).map(|x| x.state)
+    }
+
+    pub fn get_player_meta(&self, account_id: i32) -> Option<PlayerLevelMeta> {
+        self.players.get(&account_id).map(|x| x.meta)
     }
 
     pub fn for_every_player<F: FnMut(&GamePlayerState)>(&self, mut f: F) {

@@ -2,7 +2,10 @@ use crate::data::{player_data, player_object_data};
 use const_default::ConstDefault;
 use server_shared::{
     encoding::DataDecodeError,
-    schema::{game::extended_player_data, shared::IconType},
+    schema::{
+        game::{extended_player_data, player_level_meta},
+        shared::IconType,
+    },
 };
 
 #[derive(Debug, Clone, Copy, Default, ConstDefault, PartialEq)]
@@ -414,5 +417,22 @@ impl CameraRange {
             center: Point::new(x, y),
             radius,
         }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct PlayerLevelMeta {
+    pub progress: u32,
+}
+
+impl PlayerLevelMeta {
+    pub fn from_reader(reader: player_level_meta::Reader<'_>) -> Result<Self, DataDecodeError> {
+        Ok(Self {
+            progress: reader.get_progress(),
+        })
+    }
+
+    pub fn encode(&self, mut builder: player_level_meta::Builder<'_>) {
+        builder.set_progress(self.progress);
     }
 }
