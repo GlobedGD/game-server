@@ -14,12 +14,11 @@ use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
 use tracing::trace;
 
-use crate::player_state::PlayerLevelMeta;
 use crate::util::{iter_dashmap, iter_dashmap_mut};
 use crate::{
     events::*,
     handler::{ConnectionHandler, MAX_EVENT_COUNT},
-    player_state::PlayerState,
+    player_state::{PlayerLevelMeta, PlayerState},
     trigger_manager::TriggerManager,
 };
 #[cfg(feature = "scripting")]
