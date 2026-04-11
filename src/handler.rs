@@ -1299,6 +1299,7 @@ impl ConnectionHandler {
             sessions: self.session_manager.count() as u32,
             total_connections: self.total_connections.load(Ordering::Relaxed),
             total_data_messages: self.total_data_messages.load(Ordering::Relaxed),
+            server_load: 0.0f32, // TODO
         }
     }
 }
