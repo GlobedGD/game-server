@@ -74,7 +74,9 @@ impl SessionManager {
         if let Some((_, session)) =
             map.remove_if(&session_id, |_, session| session.players.is_empty())
         {
-            let _ = session;
+            if let Some(scripting) = session.scripting() {
+                scripting.cleanup();
+            }
         }
     }
 
@@ -378,7 +380,7 @@ impl GameSession {
             return;
         }
 
-        trace!(sid = self.id, "[Script] {msg}");
+        tracing::debug!(sid = self.id, "[Script] {msg}");
 
         let timer = self.created_at.elapsed();
 
