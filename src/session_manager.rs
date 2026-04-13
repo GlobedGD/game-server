@@ -74,9 +74,12 @@ impl SessionManager {
         if let Some((_, session)) =
             map.remove_if(&session_id, |_, session| session.players.is_empty())
         {
+            #[cfg(feature = "scripting")]
             if let Some(scripting) = session.scripting() {
                 scripting.cleanup();
             }
+
+            let _ = session;
         }
     }
 
