@@ -9,7 +9,7 @@ use server_shared::{
     token_issuer::TokenData,
 };
 
-use crate::session_manager::GameSession;
+use crate::{events::EventEncoder, session_manager::GameSession};
 
 #[derive(Debug)]
 pub struct SpecialUserData {
@@ -28,6 +28,8 @@ pub struct ClientData {
     settings: Mutex<UserSettings>,
     last_voice_msg: Mutex<RateLimiter>,
     last_quick_chat_msg: Mutex<RateLimiter>,
+
+    event_encoder: OnceLock<EventEncoder>,
 }
 
 impl ClientData {
@@ -136,6 +138,14 @@ impl ClientData {
     pub fn try_quick_chat(&self) -> bool {
         self.last_quick_chat_msg.lock().consume()
     }
+
+    pub fn event_encoder(&self) -> &EventEncoder {
+        self.event_encoder.get().expect("event encoder not initialized")
+    }
+
+    pub fn set_event_encoder(&self, encoder: EventEncoder) {
+        let _ = self.event_encoder.set(encoder);
+    }
 }
 
 /// How often to refill a token in the voice chat rate limiter
@@ -157,6 +167,7 @@ impl Default for ClientData {
             settings: Mutex::default(),
             last_voice_msg: Mutex::new(RateLimiter::new_precise(VOICE_INTERVAL_NS, 5)),
             last_quick_chat_msg: Mutex::new(RateLimiter::new_precise(QUICK_CHAT_INTERVAL_NS, 1)),
+            event_encoder: OnceLock::new(),
         }
     }
 }

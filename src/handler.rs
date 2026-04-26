@@ -16,13 +16,10 @@ use build_time::build_time_utc;
 use dashmap::DashMap;
 use server_shared::{
     SessionId, UserSettings,
-    data::{GameServerData, PlayerIconData, SrvStatusData},
+    data::{GameServerData, PlayerIconData, SrvStatusData, SrvUserData},
     encoding::{DataDecodeError, EncodeMessageError},
+    events::{EventDictionaryBuildError, EventStringCache},
     hmac_signer::HmacSigner,
-    token_issuer::{TokenData, TokenIssuer},
-};
-use server_shared::{
-    data::SrvUserData,
     qunet::{
         buffers::{ByteReader, ByteWriter},
         message::{BufferKind, MsgData},
@@ -34,6 +31,7 @@ use server_shared::{
         },
         transport::QunetMessageOpts,
     },
+    token_issuer::{TokenData, TokenIssuer},
 };
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -45,6 +43,7 @@ use crate::{
     client_store::ClientStore,
     config::Config,
     data,
+    events::EventEncoder,
     events::*,
     player_state::{CameraRange, PlayerLevelMeta, PlayerState},
     session_manager::{GameSession, SessionManager},
@@ -76,6 +75,9 @@ pub struct ConnectionHandler {
     all_rooms: DashMap<u32, CentralRoom>,
     user_cache: DashMap<i32, CachedUserData>,
 
+    event_string_cache: EventStringCache,
+    legacy_event_encoder: Arc<LegacyEventEncoder>,
+
     tickrate: usize,
 
     total_connections: AtomicU64,
@@ -97,6 +99,8 @@ pub enum HandlerError {
     Encoder(#[from] EncodeMessageError),
     #[error("cannot handle this message while unauthorized")]
     Unauthorized,
+    #[error("Failed to decode event dictionary")]
+    EventDict(#[from] EventDictionaryBuildError),
 }
 
 type HandlerResult<T> = Result<T, HandlerError>;
@@ -234,9 +238,16 @@ impl AppHandler for ConnectionHandler {
                 let platformer = msg.get_platformer();
                 let settings = UserSettings::from_reader(msg.get_settings()?);
                 let editor_collab = msg.get_editor_collab();
+                let event_dict = if msg.has_event_dictionary() {
+                    Some(msg.get_event_dictionary()?)
+                } else {
+                    None
+                };
 
                 try {
-                    if self.handle_login_attempt(client, account_id, token, icons, settings).await? {
+                    let event_encoder = self.create_event_encoder(event_dict)?;
+
+                    if self.handle_login_attempt(client, account_id, token, icons, settings, event_encoder).await? {
                         unpacked_data.reset(); // free up memory
 
                         if session_id != 0 {
@@ -359,6 +370,9 @@ impl ConnectionHandler {
             }
         };
 
+        let event_string_cache = EventStringCache::new();
+        let legacy_event_encoder = LegacyEventEncoder::create(&event_string_cache);
+
         Self {
             server: OnceLock::new(),
             data,
@@ -370,6 +384,8 @@ impl ConnectionHandler {
             clients: ClientStore::new(),
             all_rooms: DashMap::new(),
             user_cache: DashMap::new(),
+            event_string_cache,
+            legacy_event_encoder,
             tickrate: config.tickrate,
             total_connections: AtomicU64::new(0),
             total_data_messages: AtomicU64::new(0),
@@ -499,6 +515,7 @@ impl ConnectionHandler {
         token: &str,
         icons: PlayerIconData,
         settings: UserSettings,
+        event_encoder: EventEncoder,
     ) -> HandlerResult<bool> {
         // check if already authorized
         if client.authorized() {
@@ -516,7 +533,7 @@ impl ConnectionHandler {
                 }
             };
 
-            self.on_login_success(client, token_data, icons, settings).await?;
+            self.on_login_success(client, token_data, icons, settings, event_encoder).await?;
 
             Ok(true)
         } else {
@@ -531,6 +548,7 @@ impl ConnectionHandler {
         mut token_data: TokenData,
         icons: PlayerIconData,
         settings: UserSettings,
+        event_encoder: EventEncoder,
     ) -> HandlerResult<()> {
         info!(
             cid = client.connection_id,
@@ -591,6 +609,7 @@ impl ConnectionHandler {
         client.set_account_data(token_data);
         client.set_icons(icons);
         client.set_settings(settings);
+        client.set_event_encoder(event_encoder);
 
         let buf = data::encode_message!(self, 64, msg => {
             let mut login_ok = msg.reborrow().init_login_ok();
@@ -1300,6 +1319,14 @@ impl ConnectionHandler {
             total_connections: self.total_connections.load(Ordering::Relaxed),
             total_data_messages: self.total_data_messages.load(Ordering::Relaxed),
             server_load: 0.0f32, // TODO
+        }
+    }
+
+    fn create_event_encoder(&self, dict: Option<&[u8]>) -> HandlerResult<EventEncoder> {
+        match dict {
+            Some(dict) => Ok(EventEncoder::new(dict, &self.event_string_cache)?),
+
+            None => Ok(EventEncoder::Legacy(self.legacy_event_encoder.clone())),
         }
     }
 }

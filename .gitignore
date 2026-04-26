@@ -9,3 +9,4 @@ conn-dumps
 *.tar
 *.zst
 qdbs
+*.sh

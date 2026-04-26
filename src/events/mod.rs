@@ -1,9 +1,11 @@
 mod ids;
 mod r#in;
+mod legacy;
 mod out;
 
 pub use ids::*;
 pub use r#in::*;
+pub use legacy::*;
 pub use out::*;
 
 use server_shared::qunet::buffers::{ByteReader, ByteWriter, ByteWriterError};
