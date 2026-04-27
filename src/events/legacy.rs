@@ -7,7 +7,7 @@ use server_shared::{
         EventEncoder as NewEventEncoder, EventEncodingError as NewEventEncodingError, EventOptions,
         EventStringCache, OwnedEvent,
     },
-    qunet::buffers::{BinaryWriter, ByteReader},
+    qunet::buffers::{BinaryWriter, ByteReader, ByteReaderError, HeapByteWriter},
 };
 use thiserror::Error;
 use tracing::debug;
@@ -30,9 +30,16 @@ pub enum EventDecodingError {
     UnknownLegacyEvent,
 }
 
+impl From<ByteReaderError> for EventDecodingError {
+    fn from(value: ByteReaderError) -> Self {
+        Self::New(value.into())
+    }
+}
+
 pub struct LegacyEventEncoder {
     mapping: HashMap<u16, Arc<str>>,
     inv_mapping: HashMap<Arc<str>, u16>,
+    custom_id: Arc<str>,
 }
 
 pub enum EventEncoder {
@@ -51,40 +58,55 @@ impl LegacyEventEncoder {
             inv_mapping.insert(str_id, id);
         };
 
-        insert_one(EVENT_COUNTER_CHANGE, "dankmeme.globed2/counter-change");
-        insert_one(EVENT_PLAYER_JOIN, "dankmeme.globed2/player-join");
-        insert_one(EVENT_PLAYER_LEAVE, "dankmeme.globed2/player-leave");
-        insert_one(EVENT_DISPLAY_DATA_REFRESHED, "dankmeme.globed2/display-data-refreshed");
+        insert_one(EVENT_COUNTER_CHANGE, "globed/counter-change");
+        insert_one(EVENT_DISPLAY_DATA_REFRESHED, "globed/display-data-refreshed");
 
-        insert_one(EVENT_SCR_SPAWN_GROUP, "dankmeme.globed2/scripting.spawn-group");
-        insert_one(EVENT_SCR_SET_ITEM, "dankmeme.globed2/scripting.set-item");
-        insert_one(EVENT_SCR_REQUEST_SCRIPT_LOGS, "dankmeme.globed2/scripting.request-script-logs");
-        insert_one(EVENT_SCR_MOVE_GROUP, "dankmeme.globed2/scripting.move-group");
-        insert_one(EVENT_SCR_MOVE_GROUP_ABSOLUTE, "dankmeme.globed2/scripting.move-group-absolute");
-        insert_one(EVENT_SCR_FOLLOW_PLAYER, "dankmeme.globed2/scripting.follow-player");
-        insert_one(EVENT_SCR_FOLLOW_ROTATION, "dankmeme.globed2/scripting.follow-rotation");
+        let custom_id = cache.get("globed/scripting.custom");
+        insert_one(0, &custom_id); // one-way event, numeric id doesnt matter
+        insert_one(EVENT_SCR_SPAWN_GROUP, "globed/scripting.spawn-group");
+        insert_one(EVENT_SCR_SET_ITEM, "globed/scripting.set-item");
+        insert_one(EVENT_SCR_REQUEST_SCRIPT_LOGS, "globed/scripting.request-script-logs");
+        insert_one(EVENT_SCR_MOVE_GROUP, "globed/scripting.move-group");
+        insert_one(EVENT_SCR_MOVE_GROUP_ABSOLUTE, "globed/scripting.move-group-absolute");
+        insert_one(EVENT_SCR_FOLLOW_PLAYER, "globed/scripting.follow-player");
+        insert_one(EVENT_SCR_FOLLOW_ROTATION, "globed/scripting.follow-rotation");
 
-        insert_one(EVENT_2P_LINK_REQUEST, "dankmeme.globed2/2p.link-request");
-        insert_one(EVENT_2P_UNLINK, "dankmeme.globed2/2p.unlink");
+        insert_one(EVENT_2P_LINK_REQUEST, "globed/2p.link");
+        insert_one(EVENT_2P_UNLINK, "globed/2p.unlink");
 
-        insert_one(EVENT_SWITCHEROO_FULL_STATE, "dankmeme.globed2/switcheroo.full-state");
-        insert_one(EVENT_SWITCHEROO_SWITCH, "dankmeme.globed2/switcheroo.switch");
+        insert_one(EVENT_SWITCHEROO_FULL_STATE, "globed/switcheroo.full-state");
+        insert_one(EVENT_SWITCHEROO_SWITCH, "globed/switcheroo.switch");
 
-        Arc::new(Self { mapping, inv_mapping })
+        Arc::new(Self {
+            mapping,
+            inv_mapping,
+            custom_id,
+        })
     }
 
     pub fn encode_event(
         &self,
         id: &str,
         data: &[u8],
-        _options: &EventOptions,
+        options: &EventOptions,
         writer: &mut impl Write,
     ) -> Result<(), EventEncodingError> {
         let mut writer = BinaryWriter::new(writer);
 
-        let id = *self.inv_mapping.get(id).ok_or(EventEncodingError::UnknownLegacyEvent)?;
-        writer.write_u16(id)?;
-        writer.write_bytes(data)?;
+        if id == &*self.custom_id {
+            // data already includes the type at the start
+            writer.write_bytes(data)?;
+        } else {
+            let id = *self.inv_mapping.get(id).ok_or(EventEncodingError::UnknownLegacyEvent)?;
+            writer.write_u16(id)?;
+
+            // encode 'sent by' for 2p
+            if id == EVENT_2P_LINK_REQUEST || id == EVENT_2P_UNLINK {
+                writer.write_i32(options.sent_by_player.unwrap_or_default())?;
+            }
+
+            writer.write_bytes(data)?;
+        }
 
         Ok(())
     }
@@ -110,23 +132,46 @@ impl LegacyEventEncoder {
         let mut events = Vec::new();
 
         while reader.remaining() > 0 {
-            let ty = reader.read_u16().map_err(NewEventDecodingError::from)?;
+            let ty = reader.read_u16()?;
             let len = length_for_legacy_event(ty, reader.remaining_bytes())
                 .ok_or(EventDecodingError::UnknownLegacyEvent)?;
 
-            let data = reader.skip_bytes(len).map_err(NewEventDecodingError::from)?;
-            let str_id =
-                self.mapping.get(&ty).ok_or(EventDecodingError::UnknownLegacyEvent)?.clone();
-
-            events.push(OwnedEvent {
-                id: str_id,
-                data: data.to_vec(),
+            let mut data = reader.skip_bytes(len)?;
+            let mut options = EventOptions {
                 // legacy events were assumed to always be reliable
-                options: EventOptions {
-                    reliable: true,
-                    ..Default::default()
-                },
-            });
+                reliable: true,
+                ..Default::default()
+            };
+
+            let (id, data) = if ty < EVENT_GLOBED_BASE {
+                let mut buf = HeapByteWriter::new();
+                buf.write_u16(ty);
+                buf.write_bytes(data);
+
+                (self.custom_id.clone(), buf.into_vec())
+            } else {
+                let id =
+                    self.mapping.get(&ty).ok_or(EventDecodingError::UnknownLegacyEvent)?.clone();
+
+                if ty == EVENT_2P_LINK_REQUEST || ty == EVENT_2P_UNLINK {
+                    // these events provide a player ID as part of their data, but we want to strip that into the options
+                    let mut reader = ByteReader::new(data);
+                    let target = reader.read_i32()?;
+                    options.target_players = vec![target];
+
+                    // for link request also flip the bool lol, since the server used to do that before
+                    if ty == EVENT_2P_LINK_REQUEST {
+                        let p1 = reader.read_bool()?;
+                        data = std::slice::from_ref(if p1 { &0u8 } else { &1u8 });
+                    } else {
+                        data = &[]
+                    }
+                }
+
+                (id, data.to_vec())
+            };
+
+            events.push(OwnedEvent { id, data, options });
         }
 
         Ok(events)
@@ -136,6 +181,10 @@ impl LegacyEventEncoder {
 impl EventEncoder {
     pub fn new(dict: &[u8], cache: &EventStringCache) -> Result<Self, EventDictionaryBuildError> {
         Ok(Self::New(NewEventEncoder::create_with_dictionary(dict, cache, true)?))
+    }
+
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, Self::Legacy(_))
     }
 
     pub fn encode_event(

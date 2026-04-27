@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
+use server_shared::events::{EventOptions, OwnedEvent};
 use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
 use tracing::trace;
@@ -111,7 +112,7 @@ pub struct GamePlayerState {
     pub wants_hidden: bool,
 
     unread_counter_values: FxHashMap<u32, UnreadValue>,
-    unread_events: VecDeque<OutEvent>,
+    unread_events: VecDeque<OwnedEvent>,
     prio_counter: usize,
 }
 
@@ -128,7 +129,7 @@ impl GamePlayerState {
     }
 
     #[inline]
-    pub fn push_event(&mut self, event: OutEvent) -> bool {
+    pub fn push_event(&mut self, event: OwnedEvent) -> bool {
         if self.unread_events.len() >= 512 {
             false
         } else {
@@ -279,7 +280,8 @@ impl GameSession {
     pub fn update_player<const N: usize>(
         &self,
         state: PlayerState,
-        out_events: &mut SmallVec<[OutEvent; N]>,
+        handler: &ConnectionHandler,
+        out_events: &mut SmallVec<[OwnedEvent; N]>,
     ) {
         let mut player = self.players.entry(state.account_id).or_default();
 
@@ -298,12 +300,20 @@ impl GameSession {
 
             out_events.extend(changes.iter().map(|(id, val, _prio)| {
                 if has_scripting {
-                    OutEvent::SetItem { item_id: *id, value: *val }
+                    OwnedEvent::from_encodable(
+                        &SetItemEvent { item_id: *id, value: *val },
+                        EventOptions::default(),
+                        &handler.event_string_cache,
+                    )
                 } else {
-                    OutEvent::CounterChange(CounterChangeEvent {
-                        item_id: *id,
-                        r#type: CounterChangeType::Set(*val),
-                    })
+                    OwnedEvent::from_encodable(
+                        &CounterChangeEvent {
+                            item_id: *id,
+                            r#type: CounterChangeType::Set(*val),
+                        },
+                        EventOptions::default(),
+                        &handler.event_string_cache,
+                    )
                 }
             }));
         }
@@ -357,16 +367,16 @@ impl GameSession {
         }
     }
 
-    pub fn push_event(&self, player_id: i32, event: OutEvent) {
-        trace!(sid = self.id, "pushed event {} to {player_id}", event.type_int());
+    pub fn push_event(&self, player_id: i32, event: OwnedEvent) {
+        trace!(sid = self.id, "pushed event {} to {player_id}", event.id);
 
         if let Some(mut player) = self.players.get_mut(&player_id) {
             player.push_event(event);
         }
     }
 
-    pub fn push_event_to_all(&self, event: OutEvent) {
-        trace!(sid = self.id, "pushed event {} to all", event.type_int());
+    pub fn push_event_to_all(&self, event: OwnedEvent) {
+        trace!(sid = self.id, "pushed event {} to all", event.id);
 
         iter_dashmap_mut(&self.players, |p| {
             p.1.push_event(event.clone());
