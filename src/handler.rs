@@ -18,7 +18,7 @@ use server_shared::{
     SessionId, UserSettings,
     data::{GameServerData, PlayerIconData, SrvStatusData, SrvUserData},
     encoding::{DataDecodeError, EncodeMessageError},
-    events::{EventDictionaryBuildError, EventStringCache},
+    events::{EventDictionaryBuildError, EventStringCache, OwnedEvent},
     hmac_signer::HmacSigner,
     qunet::{
         buffers::{ByteReader, ByteWriter},
@@ -290,11 +290,15 @@ impl AppHandler for ConnectionHandler {
                 let camera_range = CameraRange::new(msg.get_camera_x(), msg.get_camera_y(), msg.get_camera_radius());
                 let message_id = msg.get_message_id();
 
-                let events = { decode_event_array(msg)? };
+                let events = client
+                    .event_encoder()
+                    .decode_events_owned(msg.get_event_data()?)
+                    .inspect_err(|e| warn!("failed to decode events: {e}"))
+                    .unwrap_or_default();
 
                 unpacked_data.reset(); // free up memory
 
-                self.handle_player_data(client, data, &camera_range, reqs, &events, message_id).await
+                self.handle_player_data(client, data, &camera_range, reqs, events, message_id).await
             },
 
             PlayerUpdateMeta(msg) => {
@@ -751,7 +755,7 @@ impl ConnectionHandler {
         mut data: PlayerState,
         camera_range: &CameraRange,
         requests: &[i32],
-        events: &[InEvent],
+        events: Vec<OwnedEvent>,
         message_id: u16,
     ) -> HandlerResult<()> {
         must_auth(client)?;
@@ -767,7 +771,7 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        for event in events.iter() {
+        for event in events {
             if let Err(e) = self.do_handle_event(client, &session, event) {
                 warn!("[{} @ {}] failed to handle event: {e}", client.account_id(), client.address);
             }
@@ -947,75 +951,75 @@ impl ConnectionHandler {
         &self,
         client: &ClientStateHandle,
         session: &GameSession,
-        event: &InEvent,
+        event: OwnedEvent,
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
-        self.emit_script_event(client, session, event);
+        // self.emit_script_event(client, session, event);
 
-        match event {
-            InEvent::CounterChange(cc) => {
-                let (item_id, value) = session.triggers().handle_change(cc);
+        // match event {
+        //     InEvent::CounterChange(cc) => {
+        //         let (item_id, value) = session.triggers().handle_change(cc);
 
-                // go and tell all players about the change
-                session.notify_counter_change(item_id, value);
-            }
+        //         // go and tell all players about the change
+        //         session.notify_counter_change(item_id, value);
+        //     }
 
-            InEvent::TwoPlayerLinkRequest { player_id, player1 } => {
-                session.push_event(
-                    *player_id,
-                    OutEvent::TwoPlayerLinkRequest {
-                        player_id: client.account_id(),
-                        player1: !*player1,
-                    },
-                );
-            }
+        //     InEvent::TwoPlayerLinkRequest { player_id, player1 } => {
+        //         session.push_event(
+        //             *player_id,
+        //             OutEvent::TwoPlayerLinkRequest {
+        //                 player_id: client.account_id(),
+        //                 player1: !*player1,
+        //             },
+        //         );
+        //     }
 
-            InEvent::TwoPlayerUnlink { player_id } => {
-                session.push_event(
-                    *player_id,
-                    OutEvent::TwoPlayerUnlink { player_id: client.account_id() },
-                );
-            }
+        //     InEvent::TwoPlayerUnlink { player_id } => {
+        //         session.push_event(
+        //             *player_id,
+        //             OutEvent::TwoPlayerUnlink { player_id: client.account_id() },
+        //         );
+        //     }
 
-            &InEvent::SwitcherooFullState { active_player, flags } => {
-                session.push_event_to_all(OutEvent::SwitcherooFullState { active_player, flags });
-            }
+        //     &InEvent::SwitcherooFullState { active_player, flags } => {
+        //         session.push_event_to_all(OutEvent::SwitcherooFullState { active_player, flags });
+        //     }
 
-            &InEvent::SwitcherooSwitch { player, r#type } => {
-                session.push_event_to_all(OutEvent::SwitcherooSwitch { player, r#type });
-            }
+        //     &InEvent::SwitcherooSwitch { player, r#type } => {
+        //         session.push_event_to_all(OutEvent::SwitcherooSwitch { player, r#type });
+        //     }
 
-            #[cfg(feature = "scripting")]
-            InEvent::RequestScriptLogs => {
-                if session.owner != client.account_id() {
-                    return Ok(());
-                }
+        //     #[cfg(feature = "scripting")]
+        //     InEvent::RequestScriptLogs => {
+        //         if session.owner != client.account_id() {
+        //             return Ok(());
+        //         }
 
-                let logs = session.pop_script_logs();
+        //         let logs = session.pop_script_logs();
 
-                let ram_usage =
-                    session.scripting().map(|x| x.memory_usage_percent()).unwrap_or(0.0);
+        //         let ram_usage =
+        //             session.scripting().map(|x| x.memory_usage_percent()).unwrap_or(0.0);
 
-                // send the logs
-                let cap = 56usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
+        //         // send the logs
+        //         let cap = 56usize + logs.iter().map(|x| x.len() + 16).sum::<usize>();
 
-                let buf = data::encode_message_heap!(self, cap, msg => {
-                    let mut msg = msg.init_script_logs();
-                    let mut out_logs = msg.reborrow().init_logs(logs.len() as u32);
+        //         let buf = data::encode_message_heap!(self, cap, msg => {
+        //             let mut msg = msg.init_script_logs();
+        //             let mut out_logs = msg.reborrow().init_logs(logs.len() as u32);
 
-                    for (i, log) in logs.iter().enumerate() {
-                        out_logs.set(i as u32, log);
-                    }
+        //             for (i, log) in logs.iter().enumerate() {
+        //                 out_logs.set(i as u32, log);
+        //             }
 
-                    msg.set_ram_usage(ram_usage);
-                })?;
+        //             msg.set_ram_usage(ram_usage);
+        //         })?;
 
-                client.send_data_bufkind(buf);
-            }
+        //         client.send_data_bufkind(buf);
+        //     }
 
-            _ => {}
-        }
+        //     _ => {}
+        // }
 
         Ok(())
     }

@@ -1,5 +1,6 @@
 use super::*;
 use bitpiece::*;
+use smallvec::SmallVec;
 
 #[derive(Default, Clone)]
 pub struct SpawnInfo {

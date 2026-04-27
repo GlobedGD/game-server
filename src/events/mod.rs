@@ -2,35 +2,16 @@ mod ids;
 mod r#in;
 mod legacy;
 mod out;
+mod events;
 
 pub use ids::*;
 pub use r#in::*;
 pub use legacy::*;
 pub use out::*;
+pub use events::*;
 
-use server_shared::qunet::buffers::{ByteReader, ByteWriter, ByteWriterError};
-use smallvec::SmallVec;
+use server_shared::qunet::buffers::{ByteWriter, ByteWriterError};
 use thiserror::Error;
-
-#[derive(Clone)]
-pub enum CounterChangeType {
-    Set(i32),
-    Add(i32),
-    Multiply(f32),
-    Divide(f32),
-}
-
-#[derive(Clone)]
-pub struct CounterChangeEvent {
-    pub item_id: u32,
-    pub r#type: CounterChangeType,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum IntOrFloat {
-    Int(i32),
-    Float(f32),
-}
 
 #[derive(Debug, Error)]
 pub enum EventEncodeError {
@@ -38,4 +19,9 @@ pub enum EventEncodeError {
     Encode(#[from] ByteWriterError),
     #[error("Invalid event data")]
     InvalidData,
+}
+
+pub trait EventEncode {
+    fn size_bound(&self) -> Option<usize>;
+    fn encode(&self, writer: &mut impl std::io::Write) -> std::io::Result<()>;
 }
