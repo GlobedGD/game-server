@@ -788,6 +788,9 @@ impl ConnectionHandler {
         let mut out_events = SmallVec::<[OwnedEvent; 8]>::new();
         session.update_player(data, self, &mut out_events);
 
+        // remove events that the client does not understand
+        out_events.retain(|e| client.event_encoder().knows_event(&e.id));
+
         // TODO (high): adjust this
         const BYTES_PER_PLAYER: usize = 124; // this is an overshoot, for ext data
         const BYTES_PER_REQUEST: usize = 70; // Rough estimate turned out to be ~67

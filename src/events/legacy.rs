@@ -84,6 +84,10 @@ impl LegacyEventEncoder {
         })
     }
 
+    pub fn knows_event(&self, id: &str) -> bool {
+        self.inv_mapping.contains_key(id)
+    }
+
     pub fn encode_event(
         &self,
         id: &str,
@@ -185,6 +189,13 @@ impl EventEncoder {
 
     pub fn is_legacy(&self) -> bool {
         matches!(self, Self::Legacy(_))
+    }
+
+    pub fn knows_event(&self, id: &str) -> bool {
+        match self {
+            EventEncoder::Legacy(encoder) => encoder.knows_event(id),
+            EventEncoder::New(encoder) => encoder.knows_event(id),
+        }
     }
 
     pub fn encode_event(
