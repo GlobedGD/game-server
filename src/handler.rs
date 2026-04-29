@@ -811,12 +811,25 @@ impl ConnectionHandler {
             let mut writer = ByteWriter::new(window);
 
             // this should never fail provided there is enough space
-            client.event_encoder().encode_events(&out_events, &mut writer).unwrap();
+            match client.event_encoder().encode_events(&out_events, &mut writer) {
+                Ok(()) => {
+                    let out_len = writer.written().len();
+                    unsafe { buf.set_len(out_len) };
 
-            let out_len = writer.written().len();
-            unsafe { buf.set_len(out_len) };
+                    Some(buf)
+                }
 
-            Some(buf)
+                Err(e) => {
+                    warn!(
+                        "[{} @ {}] failed to encode {} events, dropping them: {e}",
+                        client.account_id(),
+                        client.address,
+                        out_events.len()
+                    );
+
+                    None
+                }
+            }
         } else {
             None
         };
