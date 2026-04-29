@@ -4,15 +4,18 @@
 use std::net::IpAddr;
 
 use self::tokio::io::{AsyncReadExt, AsyncWriteExt};
-use server_shared::qunet::{
-    message::CompressionType,
-    server::{
-        ServerOutcome,
-        builder::{MemoryUsageOptions, ShouldCompressFn, UdpDiscoveryMode},
-    },
-    transport::compression::lz4_compress,
-};
 use server_shared::{config::parse_addr, data::GameServerData, logging::setup_logger};
+use server_shared::{
+    logging::setup_panic_hook,
+    qunet::{
+        message::CompressionType,
+        server::{
+            ServerOutcome,
+            builder::{MemoryUsageOptions, ShouldCompressFn, UdpDiscoveryMode},
+        },
+        transport::compression::lz4_compress,
+    },
+};
 use tracing::error;
 
 use crate::{config::Config, handler::ConnectionHandler};
@@ -57,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    setup_panic_hook();
     let _guard = setup_logger(&config.logging, config.memory_usage);
 
     if config.central_server_url.is_empty() {
