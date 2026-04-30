@@ -128,6 +128,10 @@ fn default_verify_script_signatures() -> bool {
     true
 }
 
+fn default_server_load_formula() -> Option<String> {
+    None
+}
+
 #[derive(Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -189,6 +193,10 @@ pub struct Config {
     pub tickrate: usize,
     #[serde(default = "default_verify_script_signatures")]
     pub verify_script_signatures: bool,
+
+    /// Formula used to estimate server load, sent to the server and used to help clients choose a better server.
+    #[serde(default = "default_server_load_formula")]
+    pub server_load_formula: Option<String>,
 }
 
 impl Default for Config {
@@ -210,6 +218,7 @@ impl Default for Config {
             logging: default_logging(),
             tickrate: default_tickrate(),
             verify_script_signatures: default_verify_script_signatures(),
+            server_load_formula: default_server_load_formula(),
         }
     }
 }
