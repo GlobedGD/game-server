@@ -14,6 +14,7 @@ use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use build_time::build_time_utc;
 use dashmap::DashMap;
+use parking_lot::Mutex;
 use server_shared::{
     SessionId, UserSettings,
     data::{GameServerData, PlayerIconData, SrvStatusData, SrvUserData},
@@ -45,6 +46,7 @@ use crate::{
     data,
     events::EventEncoder,
     events::*,
+    load_calculator::LoadCalculator,
     player_state::{CameraRange, PlayerLevelMeta, PlayerState},
     session_manager::{GameSession, SessionManager},
     voice_message::VoiceMessage,
@@ -82,6 +84,8 @@ pub struct ConnectionHandler {
 
     total_connections: AtomicU64,
     total_data_messages: AtomicU64,
+
+    load_calculator: Option<Mutex<LoadCalculator>>,
 
     #[cfg(feature = "scripting")]
     verify_script_signatures: bool,
@@ -379,6 +383,19 @@ impl ConnectionHandler {
         let event_string_cache = EventStringCache::new();
         let legacy_event_encoder = LegacyEventEncoder::create(&event_string_cache);
 
+        let load_formula = config.server_load_formula.clone().unwrap_or_default();
+        let load_calculator = if load_formula.is_empty() {
+            None
+        } else {
+            match LoadCalculator::new(&load_formula) {
+                Ok(calc) => Some(Mutex::new(calc)),
+                Err(e) => {
+                    error!("failed to create load calculator from formula '{}': {e}", load_formula);
+                    None
+                }
+            }
+        };
+
         Self {
             server: OnceLock::new(),
             data,
@@ -395,6 +412,7 @@ impl ConnectionHandler {
             tickrate: config.tickrate,
             total_connections: AtomicU64::new(0),
             total_data_messages: AtomicU64::new(0),
+            load_calculator,
             #[cfg(feature = "scripting")]
             verify_script_signatures: config.verify_script_signatures,
         }
@@ -1301,14 +1319,29 @@ impl ConnectionHandler {
     }
 
     pub fn get_status_data(&self) -> SrvStatusData {
+        let clients = self.server().client_count();
+        let auth_clients = self.clients.count();
+        let sessions = self.session_manager.count();
+
+        let server_load = if let Some(calc) = self.load_calculator.as_ref() {
+            let mut calc = calc.lock();
+
+            let _ = calc.set_int_var("clients", auth_clients as i64);
+            let _ = calc.set_int_var("sessions", sessions as i64);
+
+            calc.calculate().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
         SrvStatusData {
-            clients: self.server().client_count() as u32,
-            auth_clients: self.clients.count() as u32,
+            clients: clients as u32,
+            auth_clients: auth_clients as u32,
             rooms: self.all_rooms.len() as u32,
-            sessions: self.session_manager.count() as u32,
+            sessions: sessions as u32,
             total_connections: self.total_connections.load(Ordering::Relaxed),
             total_data_messages: self.total_data_messages.load(Ordering::Relaxed),
-            server_load: 0.0f32, // TODO
+            server_load,
         }
     }
 

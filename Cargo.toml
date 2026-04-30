@@ -50,6 +50,7 @@ atomic_float = "1.1.0"
 time-format = "1.2.2"
 mimalloc = { version = "0.1.48", optional = true }
 bitpiece = "2.5.0"
+evalexpr = "13.1.0"
 
 [build-dependencies]
 capnpc = "0.25.0"

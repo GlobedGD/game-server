@@ -36,7 +36,9 @@ pub mod config;
 pub mod data;
 pub mod events;
 pub mod handler;
+pub mod load_calculator;
 pub mod player_state;
+
 #[cfg(feature = "scripting")]
 pub mod scripting;
 pub mod session_manager;
