@@ -797,7 +797,12 @@ impl ConnectionHandler {
 
         let player_count = session.player_count();
 
-        let event_capacity = out_events.iter().map(|x| x.data.len() + 2).sum::<usize>(); // 2 for type
+        let event_capacity = 16
+            + if client.event_encoder().is_legacy() {
+                out_events.iter().map(|x| x.data.len() + 2).sum::<usize>() // 2 for type
+            } else {
+                out_events.iter().map(|x| x.max_encoded_size()).sum::<usize>()
+            };
 
         let to_allocate = 96
             + player_count * BYTES_PER_PLAYER
