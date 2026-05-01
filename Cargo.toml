@@ -15,7 +15,7 @@ parking_lot = { version = "0.12.5", features = [
     "send_guard",
 ] }
 rand = "0.10.0"
-server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "9b6732f", features = [
+server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "9a95fe1", features = [
     "game",
     "srvc",
     "qunet-client",

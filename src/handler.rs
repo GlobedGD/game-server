@@ -1039,7 +1039,11 @@ impl ConnectionHandler {
                 };
 
                 if event.options.target_players.is_empty() {
-                    session.push_event_to_all(out_event);
+                    if event.options.send_back {
+                        session.push_event_to_all(out_event);
+                    } else {
+                        session.push_event_to_all_except(out_event, client.account_id());
+                    }
                 } else {
                     for target in &event.options.target_players {
                         session.push_event(*target, out_event.clone());

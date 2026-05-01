@@ -383,6 +383,16 @@ impl GameSession {
         });
     }
 
+    pub fn push_event_to_all_except(&self, event: OwnedEvent, except: i32) {
+        trace!(sid = self.id, "pushed event {} to all except {except}", event.id);
+
+        iter_dashmap_mut(&self.players, |p| {
+            if p.0 != &except {
+                p.1.push_event(event.clone());
+            }
+        });
+    }
+
     #[cfg(feature = "scripting")]
     pub fn log_script_message(&self, msg: &str) {
         let mut logs = self.logs.lock();
