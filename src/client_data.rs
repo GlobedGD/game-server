@@ -1,15 +1,21 @@
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    num::NonZero,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
 use parking_lot::Mutex;
 use server_shared::{
-    MultiColor, UserSettings, data::PlayerIconData, qunet::transport::RateLimiter,
+    MultiColor, UserSettings,
+    data::PlayerIconData,
+    events::{EventRateLimiter, EventRateLimiterOptions},
+    qunet::transport::RateLimiter,
     token_issuer::TokenData,
 };
 
-use crate::session_manager::GameSession;
+use crate::{events::EventEncoder, session_manager::GameSession};
 
 #[derive(Debug)]
 pub struct SpecialUserData {
@@ -28,6 +34,9 @@ pub struct ClientData {
     settings: Mutex<UserSettings>,
     last_voice_msg: Mutex<RateLimiter>,
     last_quick_chat_msg: Mutex<RateLimiter>,
+
+    event_encoder: OnceLock<EventEncoder>,
+    event_limiter: Mutex<EventRateLimiter>,
 }
 
 impl ClientData {
@@ -50,6 +59,10 @@ impl ClientData {
     /// Returns the account ID if the client is authorized, otherwise returns 0.
     pub fn account_id(&self) -> i32 {
         self.account_data().map(|x| x.account_id).unwrap_or(0)
+    }
+
+    pub fn account_id_nz(&self) -> Option<NonZero<i32>> {
+        self.account_data().and_then(|x| NonZero::new(x.account_id))
     }
 
     /// Returns the account ID even if the client is unauthorized.
@@ -136,6 +149,18 @@ impl ClientData {
     pub fn try_quick_chat(&self) -> bool {
         self.last_quick_chat_msg.lock().consume()
     }
+
+    pub fn event_encoder(&self) -> &EventEncoder {
+        self.event_encoder.get().expect("event encoder not initialized")
+    }
+
+    pub fn set_event_encoder(&self, encoder: EventEncoder) {
+        let _ = self.event_encoder.set(encoder);
+    }
+
+    pub fn try_event(&self, targets: usize, data_size: usize, reliable: bool) -> bool {
+        self.event_limiter.lock().tick(targets, data_size, reliable)
+    }
 }
 
 /// How often to refill a token in the voice chat rate limiter
@@ -157,6 +182,12 @@ impl Default for ClientData {
             settings: Mutex::default(),
             last_voice_msg: Mutex::new(RateLimiter::new_precise(VOICE_INTERVAL_NS, 5)),
             last_quick_chat_msg: Mutex::new(RateLimiter::new_precise(QUICK_CHAT_INTERVAL_NS, 1)),
+            event_encoder: OnceLock::new(),
+            event_limiter: Mutex::new(EventRateLimiter::new(EventRateLimiterOptions {
+                // very fair limits
+                events_per_sec: 40,
+                max_burst: 500,
+            })),
         }
     }
 }

@@ -17,15 +17,12 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use server_shared::{
     SessionId, UserSettings,
-    data::{GameServerData, PlayerIconData, SrvStatusData},
+    data::{GameServerData, PlayerIconData, SrvStatusData, SrvUserData},
     encoding::{DataDecodeError, EncodeMessageError},
+    events::{EventDictionaryBuildError, EventEncode, EventOptions, EventStringCache, OwnedEvent},
     hmac_signer::HmacSigner,
-    token_issuer::{TokenData, TokenIssuer},
-};
-use server_shared::{
-    data::SrvUserData,
     qunet::{
-        buffers::{ByteReader, ByteWriter},
+        buffers::ByteWriter,
         message::{BufferKind, MsgData},
         server::{
             Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
@@ -35,6 +32,7 @@ use server_shared::{
         },
         transport::QunetMessageOpts,
     },
+    token_issuer::{TokenData, TokenIssuer},
 };
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -46,6 +44,7 @@ use crate::{
     client_store::ClientStore,
     config::Config,
     data,
+    events::EventEncoder,
     events::*,
     load_calculator::LoadCalculator,
     player_state::{CameraRange, PlayerLevelMeta, PlayerState},
@@ -78,6 +77,9 @@ pub struct ConnectionHandler {
     all_rooms: DashMap<u32, CentralRoom>,
     user_cache: DashMap<i32, CachedUserData>,
 
+    pub event_string_cache: EventStringCache,
+    legacy_event_encoder: Arc<LegacyEventEncoder>,
+
     tickrate: usize,
 
     total_connections: AtomicU64,
@@ -101,6 +103,12 @@ pub enum HandlerError {
     Encoder(#[from] EncodeMessageError),
     #[error("cannot handle this message while unauthorized")]
     Unauthorized,
+    #[error("Failed to decode event dictionary")]
+    EventDict(#[from] EventDictionaryBuildError),
+    #[error("Event rate limit exceeded")]
+    EventRateLimit,
+    #[error("Failed to decode: {0}")]
+    Decode(#[from] DataDecodeError),
 }
 
 type HandlerResult<T> = Result<T, HandlerError>;
@@ -238,9 +246,16 @@ impl AppHandler for ConnectionHandler {
                 let platformer = msg.get_platformer();
                 let settings = UserSettings::from_reader(msg.get_settings()?);
                 let editor_collab = msg.get_editor_collab();
+                let event_dict = if msg.has_event_dictionary() {
+                    Some(msg.get_event_dictionary()?)
+                } else {
+                    None
+                };
 
                 try {
-                    if self.handle_login_attempt(client, account_id, token, icons, settings).await? {
+                    let event_encoder = self.create_event_encoder(event_dict)?;
+
+                    if self.handle_login_attempt(client, account_id, token, icons, settings, event_encoder).await? {
                         unpacked_data.reset(); // free up memory
 
                         if session_id != 0 {
@@ -283,11 +298,15 @@ impl AppHandler for ConnectionHandler {
                 let camera_range = CameraRange::new(msg.get_camera_x(), msg.get_camera_y(), msg.get_camera_radius());
                 let message_id = msg.get_message_id();
 
-                let events = { decode_event_array(msg)? };
+                let events = client
+                    .event_encoder()
+                    .decode_events_owned(msg.get_event_data()?)
+                    .inspect_err(|e| warn!("failed to decode events: {e}"))
+                    .unwrap_or_default();
 
                 unpacked_data.reset(); // free up memory
 
-                self.handle_player_data(client, data, &camera_range, reqs, &events, message_id).await
+                self.handle_player_data(client, data, &camera_range, reqs, events, message_id).await
             },
 
             PlayerUpdateMeta(msg) => {
@@ -363,6 +382,9 @@ impl ConnectionHandler {
             }
         };
 
+        let event_string_cache = EventStringCache::new();
+        let legacy_event_encoder = LegacyEventEncoder::create(&event_string_cache);
+
         let load_formula = config.server_load_formula.clone().unwrap_or_default();
         let load_calculator = if load_formula.is_empty() {
             None
@@ -387,6 +409,8 @@ impl ConnectionHandler {
             clients: ClientStore::new(),
             all_rooms: DashMap::new(),
             user_cache: DashMap::new(),
+            event_string_cache,
+            legacy_event_encoder,
             tickrate: config.tickrate,
             total_connections: AtomicU64::new(0),
             total_data_messages: AtomicU64::new(0),
@@ -517,6 +541,7 @@ impl ConnectionHandler {
         token: &str,
         icons: PlayerIconData,
         settings: UserSettings,
+        event_encoder: EventEncoder,
     ) -> HandlerResult<bool> {
         // check if already authorized
         if client.authorized() {
@@ -534,7 +559,7 @@ impl ConnectionHandler {
                 }
             };
 
-            self.on_login_success(client, token_data, icons, settings).await?;
+            self.on_login_success(client, token_data, icons, settings, event_encoder).await?;
 
             Ok(true)
         } else {
@@ -549,6 +574,7 @@ impl ConnectionHandler {
         mut token_data: TokenData,
         icons: PlayerIconData,
         settings: UserSettings,
+        event_encoder: EventEncoder,
     ) -> HandlerResult<()> {
         info!(
             cid = client.connection_id,
@@ -609,6 +635,7 @@ impl ConnectionHandler {
         client.set_account_data(token_data);
         client.set_icons(icons);
         client.set_settings(settings);
+        client.set_event_encoder(event_encoder);
 
         let buf = data::encode_message!(self, 64, msg => {
             let mut login_ok = msg.reborrow().init_login_ok();
@@ -703,7 +730,10 @@ impl ConnectionHandler {
 
         new_session.add_player(client.account_id(), client.settings().hide_in_level);
 
-        self.emit_script_event(client, &new_session, &InEvent::PlayerJoin(client.account_id()));
+        #[cfg(feature = "scripting")]
+        if let Some(sm) = new_session.scripting() {
+            sm.emit_player_join(client.account_id());
+        }
 
         Ok(())
     }
@@ -725,7 +755,10 @@ impl ConnectionHandler {
         session.remove_player(account_id);
         self.session_manager.delete_session_if_empty(session.id, session.editor_collab);
 
-        self.emit_script_event(client, session, &InEvent::PlayerLeave(account_id));
+        #[cfg(feature = "scripting")]
+        if let Some(sm) = session.scripting() {
+            sm.emit_player_leave(account_id);
+        }
     }
 
     fn handle_update_icons(
@@ -736,9 +769,9 @@ impl ConnectionHandler {
         client.set_icons(icons);
 
         if let Some(session) = client.session() {
-            session.push_event_to_all(OutEvent::DisplayDataRefreshed {
-                player_id: client.account_id(),
-            });
+            let event = self
+                .to_owned_event(&DisplayDataRefreshedEvent { player: client.account_id() }, None);
+            session.push_event_to_all(event);
         }
 
         Ok(())
@@ -750,7 +783,7 @@ impl ConnectionHandler {
         mut data: PlayerState,
         camera_range: &CameraRange,
         requests: &[i32],
-        events: &[InEvent],
+        events: Vec<OwnedEvent>,
         message_id: u16,
     ) -> HandlerResult<()> {
         must_auth(client)?;
@@ -766,15 +799,34 @@ impl ConnectionHandler {
             return Ok(());
         };
 
-        for event in events.iter() {
+        for event in events {
             if let Err(e) = self.do_handle_event(client, &session, event) {
-                warn!("[{} @ {}] failed to handle event: {e}", client.account_id(), client.address);
+                match e {
+                    HandlerError::EventRateLimit => {
+                        warn!(
+                            "[{} @ {}] event rate limit exceeded, disconnecting client",
+                            client.account_id(),
+                            client.address
+                        );
+
+                        client.disconnect("Event rate limit exceeded");
+                        return Ok(());
+                    }
+
+                    e => warn!(
+                        "[{} @ {}] failed to handle event: {e}",
+                        client.account_id(),
+                        client.address
+                    ),
+                }
             }
         }
 
-        let mut out_events = SmallVec::<[OutEvent; 8]>::new();
+        let mut out_events = SmallVec::<[OwnedEvent; 8]>::new();
+        session.update_player(data, self, &mut out_events);
 
-        session.update_player(data, &mut out_events);
+        // remove events that the client does not understand
+        out_events.retain(|e| client.event_encoder().knows_event(&e.id));
 
         // TODO (high): adjust this
         const BYTES_PER_PLAYER: usize = 124; // this is an overshoot, for ext data
@@ -782,7 +834,12 @@ impl ConnectionHandler {
 
         let player_count = session.player_count();
 
-        let event_capacity = out_events.iter().map(|x| x.estimate_bytes() + 2).sum::<usize>(); // 2 for type
+        let event_capacity = 16
+            + if client.event_encoder().is_legacy() {
+                out_events.iter().map(|x| x.data.len() + 2).sum::<usize>() // 2 for type
+            } else {
+                out_events.iter().map(|x| x.max_encoded_size()).sum::<usize>()
+            };
 
         let to_allocate = 96
             + player_count * BYTES_PER_PLAYER
@@ -795,27 +852,26 @@ impl ConnectionHandler {
             let window = unsafe { buf.write_window(event_capacity).unwrap() };
             let mut writer = ByteWriter::new(window);
 
-            encode_event_array(&out_events, &mut writer);
+            // this should never fail provided there is enough space
+            match client.event_encoder().encode_events(&out_events, &mut writer) {
+                Ok(()) => {
+                    let out_len = writer.written().len();
+                    unsafe { buf.set_len(out_len) };
 
-            let out_len = writer.written().len();
-
-            match &mut buf {
-                BufferKind::Heap(_) => {
-                    // do nothing, already set_len's it
+                    Some(buf)
                 }
 
-                BufferKind::Pooled { size, .. } => {
-                    *size = out_len;
-                }
+                Err(e) => {
+                    warn!(
+                        "[{} @ {}] failed to encode {} events, dropping them: {e}",
+                        client.account_id(),
+                        client.address,
+                        out_events.len()
+                    );
 
-                BufferKind::Small { size, .. } => {
-                    *size = out_len;
+                    None
                 }
-
-                _ => unreachable!(),
             }
-
-            Some(buf)
         } else {
             None
         };
@@ -894,17 +950,18 @@ impl ConnectionHandler {
 
             // encode events
             if let Some(buf) = event_buf {
+                trace!("encoded event buf: {:x?}", &*buf);
                 level_data.reborrow().set_event_data(&buf);
             }
 
             level_data.set_message_id(message_id);
         })?;
 
-        // events make the message reliable
-        if out_events.is_empty() {
-            client.send_unreliable_data_bufkind(buf);
-        } else {
+        // events might make the message reliable
+        if out_events.iter().any(|e| e.options.reliable) {
             client.send_data_bufkind(buf);
+        } else {
+            client.send_unreliable_data_bufkind(buf);
         }
 
         Ok(())
@@ -946,47 +1003,21 @@ impl ConnectionHandler {
         &self,
         client: &ClientStateHandle,
         session: &GameSession,
-        event: &InEvent,
+        event: OwnedEvent,
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
-        self.emit_script_event(client, session, event);
-
-        match event {
-            InEvent::CounterChange(cc) => {
-                let (item_id, value) = session.triggers().handle_change(cc);
+        match &*event.id {
+            "globed/counter-change" => {
+                let event = CounterChangeEvent::decode(&event.data)?;
+                let (item_id, value) = session.triggers().handle_change(&event);
 
                 // go and tell all players about the change
                 session.notify_counter_change(item_id, value);
             }
 
-            InEvent::TwoPlayerLinkRequest { player_id, player1 } => {
-                session.push_event(
-                    *player_id,
-                    OutEvent::TwoPlayerLinkRequest {
-                        player_id: client.account_id(),
-                        player1: !*player1,
-                    },
-                );
-            }
-
-            InEvent::TwoPlayerUnlink { player_id } => {
-                session.push_event(
-                    *player_id,
-                    OutEvent::TwoPlayerUnlink { player_id: client.account_id() },
-                );
-            }
-
-            &InEvent::SwitcherooFullState { active_player, flags } => {
-                session.push_event_to_all(OutEvent::SwitcherooFullState { active_player, flags });
-            }
-
-            &InEvent::SwitcherooSwitch { player, r#type } => {
-                session.push_event_to_all(OutEvent::SwitcherooSwitch { player, r#type });
-            }
-
             #[cfg(feature = "scripting")]
-            InEvent::RequestScriptLogs => {
+            "globed/scripting.request-script-logs" => {
                 if session.owner != client.account_id() {
                     return Ok(());
                 }
@@ -1013,33 +1044,45 @@ impl ConnectionHandler {
                 client.send_data_bufkind(buf);
             }
 
-            _ => {}
+            _ => {
+                // generic event code, forward to everybody who needs to see it
+
+                let out_event = OwnedEvent {
+                    id: event.id,
+                    data: event.data,
+                    options: EventOptions {
+                        target_players: Vec::new(),
+                        sent_by_player: client.account_id_nz(),
+                        ..event.options
+                    },
+                };
+
+                // calculate how many targets in total there are, to check the rate limits
+                let targets = if event.options.target_players.is_empty() {
+                    session.player_count()
+                } else {
+                    event.options.target_players.len()
+                };
+
+                if !client.try_event(targets, out_event.data.len(), out_event.options.reliable) {
+                    return Err(HandlerError::EventRateLimit);
+                }
+
+                if event.options.target_players.is_empty() {
+                    if event.options.send_back {
+                        session.push_event_to_all(out_event);
+                    } else {
+                        session.push_event_to_all_except(out_event, client.account_id());
+                    }
+                } else {
+                    for target in &event.options.target_players {
+                        session.push_event(*target, out_event.clone());
+                    }
+                }
+            }
         }
 
         Ok(())
-    }
-
-    #[inline]
-    #[cfg(not(feature = "scripting"))]
-    fn emit_script_event(&self, _: &ClientStateHandle, _: &GameSession, _: &InEvent) {}
-
-    #[cfg(feature = "scripting")]
-    fn emit_script_event(
-        &self,
-        client: &ClientStateHandle,
-        session: &GameSession,
-        event: &InEvent,
-    ) {
-        if let Some(sm) = session.scripting() {
-            if let Err(e) = sm.handle_event(client.account_id(), event) {
-                warn!("[{}] failed to handle scripted event: {}", client.address, e);
-            }
-        } else if let InEvent::Scripted { r#type, .. } = event {
-            warn!(
-                "[{}] received a scripted event with type {type} but no script is set",
-                client.address
-            );
-        }
     }
 
     fn handle_send_level_script(
@@ -1335,6 +1378,22 @@ impl ConnectionHandler {
             server_load,
         }
     }
+
+    fn create_event_encoder(&self, dict: Option<&[u8]>) -> HandlerResult<EventEncoder> {
+        match dict {
+            Some(dict) => Ok(EventEncoder::new(dict, &self.event_string_cache)?),
+
+            None => Ok(EventEncoder::Legacy(self.legacy_event_encoder.clone())),
+        }
+    }
+
+    fn to_owned_event<T: EventEncode>(
+        &self,
+        event: &T,
+        options: Option<EventOptions>,
+    ) -> OwnedEvent {
+        OwnedEvent::from_encodable(event, options.unwrap_or_default(), &self.event_string_cache)
+    }
 }
 
 fn must_auth(client: &ClientState<ConnectionHandler>) -> HandlerResult<()> {
@@ -1377,56 +1436,6 @@ fn decode_script_array<'a>(
     }
 
     Ok(scripts)
-}
-
-fn decode_event_array(
-    msg: data::player_data_message::Reader,
-) -> Result<SmallVec<[InEvent; 8]>, DataDecodeError> {
-    let mut events = SmallVec::<[InEvent; 8]>::new();
-
-    // for ev in msg.get_old_events()?.iter() {
-    //     let ty = ev.get_type();
-    //     let data = ev.get_data()?;
-
-    //     match InEvent::decode(ty, &mut ByteReader::new(data)) {
-    //         Ok(event) => {
-    //             events.push(event);
-    //         }
-
-    //         Err(e) => {
-    //             // ignore invalid/unknown events
-    //             debug!("rejecting invalid event ({ty}): {e}");
-    //         }
-    //     }
-    // }
-
-    let data = msg.get_event_data()?;
-    let mut reader = ByteReader::new(data);
-
-    while reader.remaining() > 0 {
-        let ty = reader.read_u16()?;
-
-        match InEvent::decode(ty, &mut reader) {
-            Ok(event) => {
-                events.push(event);
-            }
-
-            Err(e) => {
-                debug!("rejecting invalid event ({ty}): {e}");
-            }
-        }
-    }
-
-    Ok(events)
-}
-
-fn encode_event_array(events: &[OutEvent], writer: &mut ByteWriter<'_>) {
-    for ev in events {
-        writer.write_u16(ev.type_int());
-        if let Err(e) = ev.encode(writer) {
-            warn!("failed to encode event ({}): {}", ev.type_int(), e);
-        }
-    }
 }
 
 fn format_systime(s: SystemTime) -> String {
