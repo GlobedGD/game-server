@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    num::NonZero,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 
 use parking_lot::Mutex;
@@ -52,6 +55,10 @@ impl ClientData {
     /// Returns the account ID if the client is authorized, otherwise returns 0.
     pub fn account_id(&self) -> i32 {
         self.account_data().map(|x| x.account_id).unwrap_or(0)
+    }
+
+    pub fn account_id_nz(&self) -> Option<NonZero<i32>> {
+        self.account_data().and_then(|x| NonZero::new(x.account_id))
     }
 
     /// Returns the account ID even if the client is unauthorized.

@@ -1033,7 +1033,7 @@ impl ConnectionHandler {
                     data: event.data,
                     options: EventOptions {
                         target_players: Vec::new(),
-                        sent_by_player: Some(client.account_id()),
+                        sent_by_player: client.account_id_nz(),
                         ..event.options
                     },
                 };

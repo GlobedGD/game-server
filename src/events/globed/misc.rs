@@ -10,7 +10,7 @@ impl EventEncode for DisplayDataRefreshedEvent {
     }
 
     fn id() -> &'static str {
-        "globed/scripting.display-data-refreshed"
+        "globed/display-data-refreshed"
     }
 
     fn encode(&self, writer: &mut HeapByteWriter) {

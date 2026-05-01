@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, sync::Arc};
+use std::{collections::HashMap, io::Write, num::NonZero, sync::Arc};
 
 use super::ids::*;
 use server_shared::{
@@ -106,7 +106,7 @@ impl LegacyEventEncoder {
 
             // encode 'sent by' for 2p
             if id == EVENT_2P_LINK_REQUEST || id == EVENT_2P_UNLINK {
-                writer.write_i32(options.sent_by_player.unwrap_or_default())?;
+                writer.write_i32(options.sent_by_player.map(NonZero::get).unwrap_or_default())?;
             }
 
             writer.write_bytes(data)?;
