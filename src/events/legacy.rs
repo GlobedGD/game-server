@@ -170,6 +170,9 @@ impl LegacyEventEncoder {
                     } else {
                         data = &[]
                     }
+                } else if ty == EVENT_SWITCHEROO_FULL_STATE || ty == EVENT_SWITCHEROO_SWITCH {
+                    // switcheroo events were also sent back to the player that sent them
+                    options.send_back = true;
                 }
 
                 (id, data.to_vec())
