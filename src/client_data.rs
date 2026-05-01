@@ -8,7 +8,10 @@ use std::{
 
 use parking_lot::Mutex;
 use server_shared::{
-    MultiColor, UserSettings, data::PlayerIconData, qunet::transport::RateLimiter,
+    MultiColor, UserSettings,
+    data::PlayerIconData,
+    events::{EventRateLimiter, EventRateLimiterOptions},
+    qunet::transport::RateLimiter,
     token_issuer::TokenData,
 };
 
@@ -33,6 +36,7 @@ pub struct ClientData {
     last_quick_chat_msg: Mutex<RateLimiter>,
 
     event_encoder: OnceLock<EventEncoder>,
+    event_limiter: Mutex<EventRateLimiter>,
 }
 
 impl ClientData {
@@ -153,6 +157,10 @@ impl ClientData {
     pub fn set_event_encoder(&self, encoder: EventEncoder) {
         let _ = self.event_encoder.set(encoder);
     }
+
+    pub fn try_event(&self, targets: usize, data_size: usize, reliable: bool) -> bool {
+        self.event_limiter.lock().tick(targets, data_size, reliable)
+    }
 }
 
 /// How often to refill a token in the voice chat rate limiter
@@ -175,6 +183,11 @@ impl Default for ClientData {
             last_voice_msg: Mutex::new(RateLimiter::new_precise(VOICE_INTERVAL_NS, 5)),
             last_quick_chat_msg: Mutex::new(RateLimiter::new_precise(QUICK_CHAT_INTERVAL_NS, 1)),
             event_encoder: OnceLock::new(),
+            event_limiter: Mutex::new(EventRateLimiter::new(EventRateLimiterOptions {
+                // very fair limits
+                events_per_sec: 40,
+                max_burst: 500,
+            })),
         }
     }
 }

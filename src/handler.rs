@@ -105,6 +105,8 @@ pub enum HandlerError {
     Unauthorized,
     #[error("Failed to decode event dictionary")]
     EventDict(#[from] EventDictionaryBuildError),
+    #[error("Event rate limit exceeded")]
+    EventRateLimit,
     #[error("Failed to decode: {0}")]
     Decode(#[from] DataDecodeError),
 }
@@ -799,7 +801,24 @@ impl ConnectionHandler {
 
         for event in events {
             if let Err(e) = self.do_handle_event(client, &session, event) {
-                warn!("[{} @ {}] failed to handle event: {e}", client.account_id(), client.address);
+                match e {
+                    HandlerError::EventRateLimit => {
+                        warn!(
+                            "[{} @ {}] event rate limit exceeded, disconnecting client",
+                            client.account_id(),
+                            client.address
+                        );
+
+                        client.disconnect("Event rate limit exceeded");
+                        return Ok(());
+                    }
+
+                    e => warn!(
+                        "[{} @ {}] failed to handle event: {e}",
+                        client.account_id(),
+                        client.address
+                    ),
+                }
             }
         }
 
@@ -1027,7 +1046,6 @@ impl ConnectionHandler {
             _ => {
                 // generic event code, forward to everybody who needs to see it
 
-                // TODO: rate limits!
                 let out_event = OwnedEvent {
                     id: event.id,
                     data: event.data,
@@ -1037,6 +1055,17 @@ impl ConnectionHandler {
                         ..event.options
                     },
                 };
+
+                // calculate how many targets in total there are, to check the rate limits
+                let targets = if event.options.target_players.is_empty() {
+                    session.player_count()
+                } else {
+                    event.options.target_players.len()
+                };
+
+                if !client.try_event(targets, out_event.data.len(), out_event.options.reliable) {
+                    return Err(HandlerError::EventRateLimit);
+                }
 
                 if event.options.target_players.is_empty() {
                     if event.options.send_back {
