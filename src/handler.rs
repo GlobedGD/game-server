@@ -950,6 +950,7 @@ impl ConnectionHandler {
 
             // encode events
             if let Some(buf) = event_buf {
+                trace!("encoded event buf: {:x?}", &*buf);
                 level_data.reborrow().set_event_data(&buf);
             }
 
