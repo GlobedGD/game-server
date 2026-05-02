@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
+use atomic_float::AtomicF32;
 use build_time::build_time_utc;
 use dashmap::DashMap;
 use parking_lot::Mutex;
@@ -22,7 +23,7 @@ use server_shared::{
     events::{EventDictionaryBuildError, EventEncode, EventOptions, EventStringCache, OwnedEvent},
     hmac_signer::HmacSigner,
     qunet::{
-        buffers::ByteWriter,
+        buffers::{ByteWriter, ByteWriterError},
         message::{BufferKind, MsgData},
         server::{
             Server as QunetServer, ServerHandle as QunetServerHandle, WeakServerHandle,
@@ -86,6 +87,7 @@ pub struct ConnectionHandler {
     total_data_messages: AtomicU64,
 
     load_calculator: Option<Mutex<LoadCalculator>>,
+    cached_load: AtomicF32,
 
     #[cfg(feature = "scripting")]
     verify_script_signatures: bool,
@@ -370,6 +372,16 @@ impl AppHandler for ConnectionHandler {
     async fn on_sigusr1(&self, _server: &QunetServer<Self>) {
         self.dump_all_connections().await;
     }
+
+    fn on_ping(
+        &self,
+        server: &QunetServer<Self>,
+        writer: &mut ByteWriter,
+    ) -> Result<(), ByteWriterError> {
+        writer.write_u32(server.client_count() as u32);
+        writer.write_f32(self.cached_load.load(Ordering::Relaxed));
+        Ok(())
+    }
 }
 
 impl ConnectionHandler {
@@ -415,6 +427,7 @@ impl ConnectionHandler {
             total_connections: AtomicU64::new(0),
             total_data_messages: AtomicU64::new(0),
             load_calculator,
+            cached_load: AtomicF32::new(0.0),
             #[cfg(feature = "scripting")]
             verify_script_signatures: config.verify_script_signatures,
         }
@@ -1367,6 +1380,8 @@ impl ConnectionHandler {
         } else {
             0.0
         };
+
+        self.cached_load.store(server_load, Ordering::Relaxed);
 
         SrvStatusData {
             clients: clients as u32,
