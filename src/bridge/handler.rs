@@ -194,6 +194,12 @@ impl EventHandler for BridgeHandler {
                     user.disconnect("disconnected by central server");
                 }
             },
+
+            ReloadConfig(msg) => {
+                unpacked_data.reset();
+
+                self.server().handler().reload_config();
+            }
         });
 
         if let Err(e) = result {

@@ -81,16 +81,13 @@ pub struct ConnectionHandler {
     pub event_string_cache: EventStringCache,
     legacy_event_encoder: Arc<LegacyEventEncoder>,
 
-    tickrate: usize,
+    config: ArcSwap<Config>,
 
     total_connections: AtomicU64,
     total_data_messages: AtomicU64,
 
     load_calculator: Option<Mutex<LoadCalculator>>,
     cached_load: AtomicF32,
-
-    #[cfg(feature = "scripting")]
-    verify_script_signatures: bool,
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
@@ -385,8 +382,8 @@ impl AppHandler for ConnectionHandler {
 }
 
 impl ConnectionHandler {
-    pub async fn new(config: &Config, data: GameServerData) -> Self {
-        let bridge = match Bridge::new(config).await {
+    pub async fn new(config: Config, data: GameServerData) -> Self {
+        let bridge = match Bridge::new(&config).await {
             Ok(x) => x,
             Err(e) => {
                 error!("failed to create a qunet client for the bridge: {e}");
@@ -423,13 +420,11 @@ impl ConnectionHandler {
             user_cache: DashMap::new(),
             event_string_cache,
             legacy_event_encoder,
-            tickrate: config.tickrate,
+            config: ArcSwap::new(Arc::new(config)),
             total_connections: AtomicU64::new(0),
             total_data_messages: AtomicU64::new(0),
             load_calculator,
             cached_load: AtomicF32::new(0.0),
-            #[cfg(feature = "scripting")]
-            verify_script_signatures: config.verify_script_signatures,
         }
     }
 
@@ -440,6 +435,10 @@ impl ConnectionHandler {
             .expect("Server not initialized yet")
             .upgrade()
             .expect("Server has shut down")
+    }
+
+    fn tickrate(&self) -> usize {
+        self.config.load().tickrate
     }
 
     pub fn server_data(&self) -> &GameServerData {
@@ -652,7 +651,7 @@ impl ConnectionHandler {
 
         let buf = data::encode_message!(self, 64, msg => {
             let mut login_ok = msg.reborrow().init_login_ok();
-            login_ok.set_tickrate(self.tickrate as u16);
+            login_ok.set_tickrate(self.tickrate() as u16);
         })?;
 
         client.send_data_bufkind(buf);
@@ -1140,7 +1139,7 @@ impl ConnectionHandler {
         #[cfg(feature = "scripting")]
         {
             // verify script signatures
-            if self.verify_script_signatures {
+            if self.config.load().verify_script_signatures {
                 let Some(signer) = &**self.script_signer.load() else {
                     session.log_script_message("[ERROR] script signer is not available");
                     return Ok(());
@@ -1376,7 +1375,13 @@ impl ConnectionHandler {
             let _ = calc.set_int_var("clients", auth_clients as i64);
             let _ = calc.set_int_var("sessions", sessions as i64);
 
-            calc.calculate().unwrap_or(0.0)
+            match calc.calculate() {
+                Ok(load) => load,
+                Err(e) => {
+                    warn!("failed to calculate server load: {e}");
+                    0.0
+                }
+            }
         } else {
             0.0
         };
@@ -1391,6 +1396,26 @@ impl ConnectionHandler {
             total_connections: self.total_connections.load(Ordering::Relaxed),
             total_data_messages: self.total_data_messages.load(Ordering::Relaxed),
             server_load,
+        }
+    }
+
+    pub fn reload_config(&self) {
+        let config = match Config::new() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("failed to reload config: {e}");
+                return;
+            }
+        };
+        self.config.store(Arc::new(config));
+
+        if let Some(calc) = self.load_calculator.as_ref() {
+            let config = self.config.load();
+            if let Some(formula) = &config.server_load_formula {
+                if let Err(e) = calc.lock().update_formula(formula) {
+                    warn!("failed to update server load formula: {e}");
+                }
+            }
         }
     }
 

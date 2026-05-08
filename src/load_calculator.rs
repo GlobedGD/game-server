@@ -15,6 +15,11 @@ impl LoadCalculator {
         })
     }
 
+    pub fn update_formula(&mut self, formula: &str) -> anyhow::Result<()> {
+        self.node = build_operator_tree::<DefaultNumericTypes>(formula)?;
+        Ok(())
+    }
+
     pub fn set_float_var(&mut self, name: &str, value: f64) -> anyhow::Result<()> {
         self.context.set_value(name.to_string(), Value::Float(value))?;
         Ok(())

@@ -132,7 +132,7 @@ fn default_server_load_formula() -> Option<String> {
     None
 }
 
-#[derive(Debug, Deserialize, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// The memory usage value (1 to 11), determines how much memory the server will preallocate for operations.

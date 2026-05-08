@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         address: server_address.as_str().try_into().expect("server_address is too long"),
     };
 
-    let handler = ConnectionHandler::new(&config, data).await;
+    let handler = ConnectionHandler::new(config.clone(), data).await;
 
     // try to ensure that this is a power of 2, and give at least 5 messages of leeway
     let mut mlimit = config.tickrate.next_power_of_two() as u32;
