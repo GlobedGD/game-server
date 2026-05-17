@@ -87,6 +87,7 @@ pub struct ConnectionHandler {
     total_data_messages: AtomicU64,
 
     load_calculator: Option<Mutex<LoadCalculator>>,
+    cached_status_data: Mutex<SrvStatusData>,
     cached_load: AtomicF32,
 }
 
@@ -424,6 +425,7 @@ impl ConnectionHandler {
             total_connections: AtomicU64::new(0),
             total_data_messages: AtomicU64::new(0),
             load_calculator,
+            cached_status_data: Mutex::new(SrvStatusData::default()),
             cached_load: AtomicF32::new(0.0),
         }
     }
@@ -1365,13 +1367,16 @@ impl ConnectionHandler {
     }
 
     pub fn get_status_data(&self) -> SrvStatusData {
+        self.cached_status_data.lock().clone()
+    }
+
+    pub fn refresh_status_data(&self) -> SrvStatusData {
         let clients = self.server().client_count();
         let auth_clients = self.clients.count();
         let sessions = self.session_manager.count();
 
         let server_load = if let Some(calc) = self.load_calculator.as_ref() {
             let mut calc = calc.lock();
-
             let _ = calc.set_int_var("clients", auth_clients as i64);
             let _ = calc.set_int_var("sessions", sessions as i64);
 
@@ -1386,9 +1391,7 @@ impl ConnectionHandler {
             0.0
         };
 
-        self.cached_load.store(server_load, Ordering::Relaxed);
-
-        SrvStatusData {
+        let data = SrvStatusData {
             clients: clients as u32,
             auth_clients: auth_clients as u32,
             rooms: self.all_rooms.len() as u32,
@@ -1396,7 +1399,12 @@ impl ConnectionHandler {
             total_connections: self.total_connections.load(Ordering::Relaxed),
             total_data_messages: self.total_data_messages.load(Ordering::Relaxed),
             server_load,
-        }
+        };
+
+        self.cached_status_data.lock().clone_from(&data);
+        self.cached_load.store(server_load, Ordering::Relaxed);
+
+        data
     }
 
     pub fn reload_config(&self) {
@@ -1417,6 +1425,8 @@ impl ConnectionHandler {
                 }
             }
         }
+
+        info!("Reloaded config & load calculator");
     }
 
     fn create_event_encoder(&self, dict: Option<&[u8]>) -> HandlerResult<EventEncoder> {

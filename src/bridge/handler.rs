@@ -77,12 +77,12 @@ impl EventHandler for BridgeHandler {
 
             crate::tokio::spawn(async move {
                 let mut interval = crate::tokio::time::interval(Duration::from_secs(30));
-                interval.tick().await;
 
                 loop {
                     interval.tick().await;
 
-                    let data = server.handler().get_status_data();
+                    let h = server.handler();
+                    let data = h.refresh_status_data();
 
                     let buf = data::encode_message_unsafe!(client.handler(), 128, msg => {
                         data.encode(msg.init_status());
