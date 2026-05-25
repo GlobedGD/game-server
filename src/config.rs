@@ -293,5 +293,7 @@ impl Config {
         env_replace("GLOBED_GS_ENABLE_STAT_TRACKING", &mut self.enable_stat_tracking);
 
         env_replace("GLOBED_GS_TICKRATE", &mut self.tickrate);
+
+        env_replace("GLOBED_GS_SERVER_LOAD_FORMULA", &mut self.server_load_formula);
     }
 }
