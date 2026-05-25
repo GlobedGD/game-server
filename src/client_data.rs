@@ -150,8 +150,8 @@ impl ClientData {
         self.last_quick_chat_msg.lock().consume()
     }
 
-    pub fn event_encoder(&self) -> &EventEncoder {
-        self.event_encoder.get().expect("event encoder not initialized")
+    pub fn event_encoder(&self) -> Option<&EventEncoder> {
+        self.event_encoder.get()
     }
 
     pub fn set_event_encoder(&self, encoder: EventEncoder) {

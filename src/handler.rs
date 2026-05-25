@@ -298,11 +298,13 @@ impl AppHandler for ConnectionHandler {
                 let camera_range = CameraRange::new(msg.get_camera_x(), msg.get_camera_y(), msg.get_camera_radius());
                 let message_id = msg.get_message_id();
 
-                let events = client
-                    .event_encoder()
-                    .decode_events_owned(msg.get_event_data()?)
-                    .inspect_err(|e| warn!("failed to decode events: {e}"))
-                    .unwrap_or_default();
+                let events = if let Some(encoder) = client.event_encoder() {
+                    encoder.decode_events_owned(msg.get_event_data()?)
+                        .inspect_err(|e| warn!("failed to decode events: {e}"))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
 
                 unpacked_data.reset(); // free up memory
 
@@ -813,6 +815,12 @@ impl ConnectionHandler {
             return Ok(());
         };
 
+        // remove events that the client does not understand
+        let Some(encoder) = client.event_encoder() else {
+            warn!("client {} has no event encoder in data message!", client.account_id());
+            return Ok(());
+        };
+
         for event in events {
             if let Err(e) = self.do_handle_event(client, &session, event) {
                 match e {
@@ -839,8 +847,7 @@ impl ConnectionHandler {
         let mut out_events = SmallVec::<[OwnedEvent; 8]>::new();
         session.update_player(data, self, &mut out_events);
 
-        // remove events that the client does not understand
-        out_events.retain(|e| client.event_encoder().knows_event(&e.id));
+        out_events.retain(|e| encoder.knows_event(&e.id));
 
         // TODO (high): adjust this
         const BYTES_PER_PLAYER: usize = 124; // this is an overshoot, for ext data
@@ -849,7 +856,7 @@ impl ConnectionHandler {
         let player_count = session.player_count();
 
         let event_capacity = 16
-            + if client.event_encoder().is_legacy() {
+            + if encoder.is_legacy() {
                 out_events.iter().map(|x| x.data.len() + 2).sum::<usize>() // 2 for type
             } else {
                 out_events.iter().map(|x| x.max_encoded_size()).sum::<usize>()
@@ -867,7 +874,7 @@ impl ConnectionHandler {
             let mut writer = ByteWriter::new(window);
 
             // this should never fail provided there is enough space
-            match client.event_encoder().encode_events(&out_events, &mut writer) {
+            match encoder.encode_events(&out_events, &mut writer) {
                 Ok(()) => {
                     let out_len = writer.written().len();
                     unsafe { buf.set_len(out_len) };
