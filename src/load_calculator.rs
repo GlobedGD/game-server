@@ -1,3 +1,4 @@
+use anyhow::bail;
 use evalexpr::*;
 
 pub struct LoadCalculator {
@@ -31,6 +32,21 @@ impl LoadCalculator {
     }
 
     pub fn calculate(&self) -> anyhow::Result<f32> {
-        Ok(self.node.eval_float_with_context(&self.context)? as f32)
+        let val = self.node.eval_with_context(&self.context)?;
+
+        Ok(match val {
+            Value::Boolean(b) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Value::Int(val) => val as f32,
+            Value::Float(val) => val as f32,
+            _ => bail!(
+                "load formula returned {val:?}, when a boolean, integer or a float was expected"
+            ),
+        })
     }
 }
