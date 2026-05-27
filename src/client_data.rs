@@ -185,7 +185,7 @@ impl Default for ClientData {
             event_encoder: OnceLock::new(),
             event_limiter: Mutex::new(EventRateLimiter::new(EventRateLimiterOptions {
                 // very fair limits
-                events_per_sec: 40,
+                events_per_sec: 50,
                 max_burst: 500,
             })),
         }
