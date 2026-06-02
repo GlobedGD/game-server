@@ -255,7 +255,7 @@ impl BridgeHandler {
         err: ConnectionError,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
         let attempt_count = self.reconnect_attempt.fetch_add(1, Ordering::Relaxed) + 1;
-        let wait_time = Duration::from_secs(2u64.pow(attempt_count.clamp(1, 5) as u32 / 2));
+        let wait_time = Duration::from_secs(2u64.pow(attempt_count.clamp(1, 4) as u32 / 2));
 
         error!("Connection to central server failed, waiting {wait_time:?} and retrying: {err}");
 
