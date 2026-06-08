@@ -4,6 +4,7 @@ use server_shared::qunet::{
     client::{Client, ClientHandle, ClientOutcome, ConnectionError},
     server::WeakServerHandle,
 };
+use std::time::Duration;
 use thiserror::Error;
 
 use crate::{bridge::handler::BridgeHandler, config::Config, handler::ConnectionHandler};
@@ -33,7 +34,9 @@ impl Bridge {
             config.central_server_password.clone(),
         );
 
-        let mut builder = Client::builder().with_event_handler(handler);
+        let mut builder = Client::builder()
+            .with_event_handler(handler)
+            .with_keepalive_interval(Duration::from_secs(5));
 
         if let Some(cert_path) = &config.quic_cert_path {
             builder = builder.with_quic_cert_path(cert_path);
