@@ -105,7 +105,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly-2025-12-01
+          toolchain: nightly-2026-06-01
           target: x86_64-pc-windows-msvc
 
       - name: Cache
