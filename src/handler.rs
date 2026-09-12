@@ -724,13 +724,19 @@ impl ConnectionHandler {
             if room_id != 0 {
                 if let Some(room) = self.all_rooms.get(&room_id) {
                     if room.passcode != 0 && room.passcode != passcode {
-                        debug!("incorrect passcode, expected {}, got {}", room.passcode, passcode);
+                        warn!("incorrect passcode, expected {}, got {}", room.passcode, passcode);
                         return Err(data::JoinSessionFailedReason::InvalidPasscode);
                     }
 
                     owner = room.owner;
                 } else {
-                    debug!("no room found for session {} (room id {})", session.as_u64(), room_id);
+                    warn!(
+                        "[{} @ {}] no room found for session {} (room id {})",
+                        client.account_id(),
+                        client.address,
+                        session.as_u64(),
+                        room_id
+                    );
                     return Err(data::JoinSessionFailedReason::InvalidRoom);
                 }
             } else {
