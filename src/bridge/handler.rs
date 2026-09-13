@@ -284,7 +284,7 @@ impl BridgeHandler {
         owner: i32,
         client: &Client<Self>,
     ) {
-        debug!("creating room {} with passcode {} (owner: {})", room_id, passcode, owner);
+        info!("creating room {} with passcode {} (owner: {})", room_id, passcode, owner);
 
         if !self.authenticated() {
             return;
@@ -303,7 +303,7 @@ impl BridgeHandler {
     }
 
     async fn handle_room_deleted(&self, room_id: u32) {
-        debug!("deleting room {}", room_id);
+        info!("deleting room {}", room_id);
 
         if !self.authenticated() {
             return;
