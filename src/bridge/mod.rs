@@ -36,7 +36,7 @@ impl Bridge {
 
         let mut builder = Client::builder()
             .with_event_handler(handler)
-            .with_keepalive_interval(Duration::from_secs(5));
+            .with_keepalive_interval(Duration::from_secs(3));
 
         if let Some(cert_path) = &config.quic_cert_path {
             builder = builder.with_quic_cert_path(cert_path);
