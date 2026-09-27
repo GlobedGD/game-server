@@ -874,7 +874,7 @@ impl ConnectionHandler {
             + event_capacity;
 
         // first encode events
-        let event_buf = if event_capacity > 0 {
+        let event_buf = if !out_events.is_empty() {
             let mut buf = self.server().request_buffer(event_capacity);
             let window = unsafe { buf.write_window(event_capacity).unwrap() };
             let mut writer = ByteWriter::new(window);
