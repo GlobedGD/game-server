@@ -45,13 +45,15 @@ use crate::{
     client_store::ClientStore,
     config::Config,
     data,
-    events::EventEncoder,
-    events::*,
+    events::{EventEncoder, *},
     load_calculator::LoadCalculator,
     player_state::{CameraRange, PlayerLevelMeta, PlayerState},
     session_manager::{GameSession, SessionManager},
     voice_message::VoiceMessage,
 };
+
+#[cfg(feature = "fake_players")]
+use crate::fake_players::FakePlayerState;
 
 struct CentralRoom {
     pub passcode: u32,
@@ -89,6 +91,9 @@ pub struct ConnectionHandler {
     load_calculator: Option<Mutex<LoadCalculator>>,
     cached_status_data: Mutex<SrvStatusData>,
     cached_load: AtomicF32,
+
+    #[cfg(feature = "fake_players")]
+    fake_player_states: Mutex<Vec<FakePlayerLevelState>>,
 }
 
 pub type ClientStateHandle = Arc<ClientState<ConnectionHandler>>;
@@ -128,6 +133,12 @@ pub struct BorrowedLevelScript<'a> {
     pub filename: &'a str,
     pub main: bool,
     pub signature: [u8; 32],
+}
+
+#[cfg(feature = "fake_players")]
+struct FakePlayerLevelState {
+    state: FakePlayerState,
+    session: Weak<GameSession>,
 }
 
 impl AppHandler for ConnectionHandler {
@@ -185,6 +196,16 @@ impl AppHandler for ConnectionHandler {
             server.schedule(Duration::from_mins(7), |server| async move {
                 server.handler().dump_all_connections().await;
             });
+        }
+
+        #[allow(dead_code)]
+        let config = self.config.load();
+
+        #[cfg(feature = "fake_players")]
+        if !config.fake_players_dir.is_empty() {
+            if let Err(e) = self.init_fake_players(&config.fake_players_dir) {
+                error!("failed to init fake players: {e}");
+            }
         }
 
         Ok(())
@@ -1456,6 +1477,44 @@ impl ConnectionHandler {
         options: Option<EventOptions>,
     ) -> OwnedEvent {
         OwnedEvent::from_encodable(event, options.unwrap_or_default(), &self.event_string_cache)
+    }
+
+    #[cfg(feature = "fake_players")]
+    fn init_fake_players(&self, dir: &Path) -> anyhow::Result<()> {
+        let server = self.server();
+        let players = crate::fake_players::parse_players(dir)?;
+        let mut states = Vec::with_capacity(players.len());
+
+        for player in players {
+            // TODO: use our server id
+            let s_id = SessionId::from_parts(0, player.level_id, 0);
+            let session = self.session_manager.get_or_create_session(
+                s_id.as_u64(),
+                player.account_id,
+                false,
+                false,
+            );
+
+            session.add_player(player.account_id, false);
+            states.push(FakePlayerLevelState {
+                state: FakePlayerState::new(player),
+                session: Arc::downgrade(&session),
+            });
+        }
+
+        *self.fake_player_states.lock() = states;
+
+        let freq = 1.0 / self.tickrate() as f32;
+        server.schedule(Duration::from_secs_f32(freq), |server| async move {
+            server.handler().update_fake_players();
+        });
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fake_players")]
+    fn update_fake_players(&self) {
+        let states = self.fake_player_states.lock();
     }
 }
 

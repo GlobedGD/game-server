@@ -1,4 +1,4 @@
-#![feature(try_blocks, thread_local, generic_const_exprs)]
+#![feature(try_blocks, thread_local, generic_const_exprs, path_is_empty)]
 #![allow(clippy::new_without_default, clippy::collapsible_if)]
 
 use std::net::IpAddr;
@@ -39,6 +39,8 @@ pub mod handler;
 pub mod load_calculator;
 pub mod player_state;
 
+#[cfg(feature = "fake_players")]
+pub mod fake_players;
 #[cfg(feature = "scripting")]
 pub mod scripting;
 pub mod session_manager;

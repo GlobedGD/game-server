@@ -64,9 +64,15 @@ impl ConstDefault for PlayerIconType {
 
 impl From<IconType> for PlayerIconType {
     fn from(value: IconType) -> Self {
-        let raw = value as u16;
+        let raw = value as u16 as u8;
+        Self::try_from(raw).unwrap()
+    }
+}
 
-        match raw {
+impl TryFrom<u8> for PlayerIconType {
+    type Error = ();
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
             0 => PlayerIconType::Unknown,
             1 => PlayerIconType::Cube,
             2 => PlayerIconType::Ship,
@@ -77,8 +83,8 @@ impl From<IconType> for PlayerIconType {
             7 => PlayerIconType::Spider,
             8 => PlayerIconType::Swing,
             9 => PlayerIconType::Jetpack,
-            _ => unreachable!(),
-        }
+            _ => Err(())?,
+        })
     }
 }
 
