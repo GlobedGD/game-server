@@ -9,11 +9,7 @@ use thiserror::Error;
 
 use crate::{bridge::handler::BridgeHandler, config::Config, handler::ConnectionHandler};
 
-#[allow(unused)]
-mod data;
 mod handler;
-mod server_role;
-pub use server_role::ServerRole;
 
 #[derive(Debug, Error)]
 pub enum BridgeError {

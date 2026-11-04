@@ -9,10 +9,9 @@ use std::{
 
 use crate::handler::ConnectionHandler;
 
-use super::{data, server_role::ServerRole};
 use parking_lot::Mutex;
 use server_shared::{
-    data::{SRVC_MAGIC, SRVC_PROTOCOL_VERSION, SrvUserData},
+    data::{SRVC_MAGIC, SRVC_PROTOCOL_VERSION, SrvMessage, SrvRole, SrvUserData},
     qunet::{
         buffers::HeapByteWriter,
         client::{Client, ClientHandle, ConnectionError, EventHandler},
@@ -20,7 +19,7 @@ use server_shared::{
         server::{ServerHandle as QunetServerHandle, WeakServerHandle},
     },
 };
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 pub struct BridgeHandler {
     server_url: String,
@@ -47,28 +46,13 @@ impl EventHandler for BridgeHandler {
         client.send_data(writer.written());
 
         // authenticate
-        let buf = data::encode_message_unsafe!(self, 512, msg => {
-            let main_server = self.server();
-            let data = main_server.handler().server_data();
-
-            let mut login_srv = msg.reborrow().init_login_srv();
-            login_srv.set_password(&self.password);
-            let mut srv_data = login_srv.init_data();
-            srv_data.set_name(&data.name);
-            srv_data.set_string_id(&data.string_id);
-            srv_data.set_region(&data.region);
-            srv_data.set_address(&data.address);
-        });
-
-        let buf = match buf {
-            Ok(buf) => buf,
-            Err(e) => {
-                error!("failed to encode login message: {e}");
-                return;
-            }
+        let main_server = self.server();
+        let msg = SrvMessage::Login {
+            password: self.password.clone(),
+            data: main_server.handler().server_data().clone(),
         };
 
-        client.send_data_bufkind(buf);
+        client.send_data(&msg.encode().expect("failed to encode login message"));
 
         // schedule a status message to be sent every once in a while
         if !self.scheduled_status.swap(true, Ordering::Relaxed) {
@@ -81,17 +65,15 @@ impl EventHandler for BridgeHandler {
                 loop {
                     interval.tick().await;
 
+                    if !client.connected() {
+                        continue;
+                    }
+
                     let h = server.handler();
                     let data = h.refresh_status_data();
-
-                    let buf = data::encode_message_unsafe!(client.handler(), 128, msg => {
-                        data.encode(msg.init_status());
-                    })
-                    .expect("failed to encode status message");
-
-                    if client.connected() {
-                        client.send_data_bufkind(buf);
-                    }
+                    client.send_data(
+                        &SrvMessage::Status(data).encode().expect("failed to encode status"),
+                    );
                 }
             });
         }
@@ -129,82 +111,55 @@ impl EventHandler for BridgeHandler {
     }
 
     async fn on_recv_data(&self, client: &Client<Self>, data: MsgData<'_>) {
-        let result = data::decode_message_match!(self, data, unpacked_data, {
-            LoginOk(msg) => {
-                info!("Received login confirmation from the central server");
+        let msg = match SrvMessage::decode(&data) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!("Failed to decode message from central server: {e}");
+                return;
+            }
+        };
 
-                let token_key = msg.get_token_key()?.to_str()?;
-                let token_expiry = Duration::from_secs(msg.get_token_expiry());
-                let script_key = msg.get_script_key()?.to_str()?;
+        match msg {
+            SrvMessage::LoginOk {
+                token_key,
+                script_key,
+                token_expiry,
+                roles,
+            } => {
+                self.handle_login_ok(client, token_key, script_key, token_expiry, roles).await;
+            }
 
-                if let Err(e) = self.server().handler().init_bridge_things(token_key, token_expiry, script_key) {
-                    error!("Failed to initialize token issuer: {e}");
-                    client.disconnect();
-                    return Ok(());
-                }
-
-                let in_roles = msg.get_roles()?;
-                let mut roles = Vec::with_capacity(in_roles.len() as usize);
-
-                for role in in_roles.iter() {
-                    roles.push(ServerRole::from_reader(role)?);
-                }
-
-                self.set_authenticated(true);
-                self.server().handler().set_server_roles(roles);
-            },
-
-            LoginFailed(msg) => {
-                error!("Central server login failed: {}", msg.get_reason()?.to_str()?);
+            SrvMessage::LoginFailed { reason } => {
+                error!("Central server login failed: {reason}");
                 client.disconnect();
-            },
+            }
 
-            NotifyRoomCreated(msg) => {
-                let room_id = msg.get_room_id();
-                let passcode = msg.get_passcode();
-                let owner = msg.get_owner();
-
-                unpacked_data.reset(); // free up memory
-
+            SrvMessage::NotifyRoomCreated { room_id, passcode, owner } => {
                 self.handle_room_created(room_id, passcode, owner, client).await;
-            },
+            }
 
-            NotifyRoomDeleted(msg) => {
-                let room_id = msg.get_room_id();
-
-                unpacked_data.reset(); // free up memory
-
+            SrvMessage::NotifyRoomDeleted { room_id } => {
                 self.handle_room_deleted(room_id).await;
-            },
+            }
 
-            NotifyUserData(msg) => {
-                let data = SrvUserData::from_reader(msg.get_data()?)?;
-
-                unpacked_data.reset();
-
+            SrvMessage::NotifyUserData { data } => {
                 self.handle_notify_user_data(data).await;
-            },
+            }
 
-            NotifyKickUser(msg) => {
-                let account_id = msg.get_account_id();
-
-                unpacked_data.reset();
-
-                if let Some(user) = self.server().handler().find_client(account_id) {
+            SrvMessage::NotifyKickUser { id } => {
+                if let Some(user) = self.server().handler().find_client(id) {
                     user.disconnect("disconnected by central server");
                 }
-            },
+            }
 
-            ReloadConfig(msg) => {
-                unpacked_data.reset();
-
+            SrvMessage::ReloadConfig => {
                 self.server().handler().reload_config();
             }
-        });
 
-        if let Err(e) = result {
-            error!("Error processing message from central server: {e}");
-        }
+            _ => {
+                warn!("Received unexpected message from central server: {msg:?}");
+            }
+        };
     }
 }
 
@@ -248,7 +203,6 @@ impl BridgeHandler {
         self.authenticated.swap(authenticated, Ordering::Relaxed)
     }
 
-    #[must_use]
     fn on_connection_error_helper<'a>(
         &'a self,
         client: &'a ClientHandle<Self>,
@@ -262,7 +216,6 @@ impl BridgeHandler {
         self.delay_reconnect(client, wait_time)
     }
 
-    #[must_use]
     fn delay_reconnect<'a>(
         &'a self,
         client: &'a ClientHandle<Self>,
@@ -293,13 +246,7 @@ impl BridgeHandler {
         self.server().handler().add_server_room(room_id, passcode, owner);
 
         // send reply
-        let buf = data::encode_message!(self, 40, msg => {
-            let mut ack = msg.init_room_created_ack();
-            ack.set_room_id(room_id);
-        })
-        .expect("failed to encode room created ack");
-
-        client.send_data_bufkind(buf);
+        client.send_data(&SrvMessage::RoomCreatedAck { room_id }.encode().unwrap());
     }
 
     async fn handle_room_deleted(&self, room_id: u32) {
@@ -323,5 +270,27 @@ impl BridgeHandler {
         } else {
             handler.add_user_data_cache(data);
         }
+    }
+
+    async fn handle_login_ok(
+        &self,
+        client: &Client<Self>,
+        token_key: String,
+        script_key: String,
+        token_expiry: u64, // seconds
+        roles: Vec<SrvRole>,
+    ) {
+        if let Err(e) = self.server().handler().init_bridge_things(
+            &token_key,
+            Duration::from_secs(token_expiry),
+            &script_key,
+        ) {
+            error!("Failed to initialize token issuer: {e}");
+            client.disconnect();
+            return;
+        }
+
+        self.set_authenticated(true);
+        self.server().handler().set_server_roles(roles);
     }
 }

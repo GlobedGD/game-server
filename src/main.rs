@@ -1,4 +1,4 @@
-#![feature(try_blocks, thread_local, generic_const_exprs)]
+#![feature(try_blocks)]
 #![allow(clippy::new_without_default, clippy::collapsible_if)]
 
 use std::net::IpAddr;
@@ -91,10 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let data = GameServerData {
         id: 0,
-        string_id: config.server_id.as_str().try_into().expect("server_id is too long"),
-        name: config.server_name.as_str().try_into().expect("server_name is too long"),
-        region: config.server_region.as_str().try_into().expect("server_region is too long"),
-        address: server_address.as_str().try_into().expect("server_address is too long"),
+        string_id: config.server_id.clone(),
+        name: config.server_name.clone(),
+        region: config.server_region.clone(),
+        address: server_address.clone(),
     };
 
     let handler = ConnectionHandler::new(config.clone(), data).await;
@@ -208,14 +208,7 @@ fn should_c_3(data: &[u8]) -> Option<CompressionType> {
     if data.len() < 256 { None } else { Some(CompressionType::Lz4) }
 }
 
-const fn const_min(a: usize, b: usize) -> usize {
-    if a < b { a } else { b }
-}
-
-fn should_c_4<const MIN: usize, const ZSTD_BREAK: usize>(data: &[u8]) -> Option<CompressionType>
-where
-    [(); const_min(ZSTD_BREAK, 8192)]:,
-{
+fn should_c_4<const MIN: usize, const ZSTD_BREAK: usize>(data: &[u8]) -> Option<CompressionType> {
     if data.len() < MIN {
         return None;
     }
@@ -223,7 +216,7 @@ where
     // kofi
 
     // adaptive, try compressing with lz4
-    let mut temp = [0u8; const_min(ZSTD_BREAK, 8192)];
+    let mut temp = [0u8; ZSTD_BREAK];
     let lz4_size = lz4_compress(data, &mut temp).unwrap_or(data.len() + 1);
 
     // if lz4 is not effective at all, don't compress

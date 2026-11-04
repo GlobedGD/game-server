@@ -18,7 +18,7 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use server_shared::{
     SessionId, UserSettings,
-    data::{GameServerData, PlayerIconData, SrvStatusData, SrvUserData},
+    data::{GameServerData, PlayerIconData, SrvRole, SrvStatusData, SrvUserData},
     encoding::{DataDecodeError, EncodeMessageError},
     events::{EventDictionaryBuildError, EventEncode, EventOptions, EventStringCache, OwnedEvent},
     hmac_signer::HmacSigner,
@@ -40,7 +40,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    bridge::{Bridge, ServerRole},
+    bridge::Bridge,
     client_data::ClientData,
     client_store::ClientStore,
     config::Config,
@@ -71,7 +71,7 @@ pub struct ConnectionHandler {
     bridge: Bridge,
     token_issuer: ArcSwap<Option<TokenIssuer>>,
     script_signer: ArcSwap<Option<HmacSigner>>,
-    roles: ArcSwap<Vec<ServerRole>>,
+    roles: ArcSwap<Vec<SrvRole>>,
     session_manager: Arc<SessionManager>,
 
     clients: ClientStore,
@@ -134,10 +134,10 @@ impl AppHandler for ConnectionHandler {
     type ClientData = ClientData;
 
     async fn on_launch(&self, server: QunetServerHandle<Self>) -> AppResult<()> {
-        let _ = self.server.set(server.make_weak());
+        let _ = self.server.set(server.downgrade());
 
-        self.bridge.set_server(server.make_weak());
-        self.session_manager.init_server(server.make_weak());
+        self.bridge.set_server(server.downgrade());
+        self.session_manager.init_server(server.downgrade());
 
         // connect to the central server
         if let Err(e) = self.bridge.connect() {
@@ -478,7 +478,7 @@ impl ConnectionHandler {
         Ok(())
     }
 
-    pub fn set_server_roles(&self, roles: Vec<ServerRole>) {
+    pub fn set_server_roles(&self, roles: Vec<SrvRole>) {
         self.roles.store(Arc::new(roles));
     }
 
