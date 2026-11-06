@@ -1,13 +1,12 @@
 use std::{
     borrow::Cow,
-    collections::HashSet,
     net::SocketAddr,
     path::Path,
     sync::{
         Arc, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use anyhow::anyhow;
@@ -18,7 +17,9 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use server_shared::{
     SessionId, UserSettings,
-    data::{GameServerData, PlayerIconData, SrvRole, SrvStatusData, SrvUserData},
+    data::{
+        ClientAccountData, GameServerData, PlayerIconData, SrvRole, SrvStatusData, SrvUserData,
+    },
     encoding::{DataDecodeError, EncodeMessageError},
     events::{EventDictionaryBuildError, EventEncode, EventOptions, EventStringCache, OwnedEvent},
     hmac_signer::HmacSigner,
@@ -33,7 +34,7 @@ use server_shared::{
         },
         transport::QunetMessageOpts,
     },
-    token_issuer::{TokenData, TokenIssuer},
+    schema::shared::player_display_data,
 };
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -45,8 +46,7 @@ use crate::{
     client_store::ClientStore,
     config::Config,
     data,
-    events::EventEncoder,
-    events::*,
+    events::{EventEncoder, *},
     load_calculator::LoadCalculator,
     player_state::{CameraRange, PlayerLevelMeta, PlayerState},
     session_manager::{GameSession, SessionManager},
@@ -58,25 +58,17 @@ struct CentralRoom {
     pub owner: i32,
 }
 
-#[derive(Clone, Debug)]
-struct CachedUserData {
-    pub data: SrvUserData,
-    pub accessed_at: Instant,
-}
-
 pub struct ConnectionHandler {
     // we use a weak handle here to avoid ref cycles, which will make it impossible to drop the server
     server: OnceLock<WeakServerHandle<Self>>,
     data: GameServerData,
     bridge: Bridge,
-    token_issuer: ArcSwap<Option<TokenIssuer>>,
     script_signer: ArcSwap<Option<HmacSigner>>,
     roles: ArcSwap<Vec<SrvRole>>,
     session_manager: Arc<SessionManager>,
 
     clients: ClientStore,
     all_rooms: DashMap<u32, CentralRoom>,
-    user_cache: DashMap<i32, CachedUserData>,
 
     pub event_string_cache: EventStringCache,
     legacy_event_encoder: Arc<LegacyEventEncoder>,
@@ -169,18 +161,6 @@ impl AppHandler for ConnectionHandler {
             crate::scripting::run_cleanup();
         });
 
-        server.schedule(Duration::from_hours(6), |server| async move {
-            // TODO: determine if this is really worth it?
-            // let pool = server.get_buffer_pool();
-            // let prev_usage = pool.stats().total_heap_usage;
-            // pool.shrink();
-            // let new_usage = pool.stats().total_heap_usage;
-
-            // info!("Shrinking buffer pool to reclaim memory: {} -> {} bytes", prev_usage, new_usage);
-
-            server.handler().cleanup_user_data_cache();
-        });
-
         if server.stat_tracker().is_some() {
             server.schedule(Duration::from_mins(7), |server| async move {
                 server.handler().dump_all_connections().await;
@@ -224,7 +204,6 @@ impl AppHandler for ConnectionHandler {
         if account_id != 0 {
             // remove only if the client has not been replaced by a newer login
             self.clients.remove_if_same(account_id, client);
-            self.delete_from_user_data_cache(account_id);
         }
     }
 
@@ -240,6 +219,7 @@ impl AppHandler for ConnectionHandler {
             Login(msg) => {
                 let account_id = msg.get_account_id();
                 let token = msg.get_token()?.to_str()?;
+                let secret = msg.get_secret();
                 let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
                 let session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
@@ -255,7 +235,7 @@ impl AppHandler for ConnectionHandler {
                 try {
                     let event_encoder = self.create_event_encoder(event_dict)?;
 
-                    if self.handle_login_attempt(client, account_id, token, icons, settings, event_encoder).await? {
+                    if self.handle_login_attempt(client, account_id, token, secret, icons, settings, event_encoder).await? {
                         unpacked_data.reset(); // free up memory
 
                         if session_id != 0 {
@@ -414,13 +394,11 @@ impl ConnectionHandler {
             server: OnceLock::new(),
             data,
             bridge,
-            token_issuer: ArcSwap::default(),
             roles: ArcSwap::default(),
             script_signer: ArcSwap::default(),
             session_manager: Arc::new(SessionManager::new()),
             clients: ClientStore::new(),
             all_rooms: DashMap::new(),
-            user_cache: DashMap::new(),
             event_string_cache,
             legacy_event_encoder,
             config: ArcSwap::new(Arc::new(config)),
@@ -449,28 +427,24 @@ impl ConnectionHandler {
         &self.data
     }
 
+    pub fn bridge(&self) -> &Bridge {
+        &self.bridge
+    }
+
     pub fn find_client(&self, id: i32) -> Option<ClientStateHandle> {
         self.clients.find(id)
     }
 
-    pub fn find_account_data(&self, id: i32) -> Option<TokenData> {
-        self.find_client(id).and_then(|x| x.account_data().cloned())
+    pub fn find_account_data(&self, id: i32) -> Option<ClientAccountData> {
+        self.find_client(id).and_then(|x| x.account_data())
     }
 
     // Apis for bridge
 
-    pub fn init_bridge_things(
-        &self,
-        token_key: &str,
-        token_expiry: Duration,
-        script_key: &str,
-    ) -> anyhow::Result<()> {
-        let issuer = TokenIssuer::new(token_key, token_expiry)
-            .map_err(|e| anyhow!("failed to create token issuer: {}", e))?;
+    pub fn init_bridge_things(&self, script_key: &str) -> anyhow::Result<()> {
         let signer = HmacSigner::new(script_key)
             .map_err(|e| anyhow!("failed to create token issuer: {}", e))?;
 
-        self.token_issuer.store(Arc::new(Some(issuer)));
         self.script_signer.store(Arc::new(Some(signer)));
 
         debug!("Token issuer initialized");
@@ -485,7 +459,6 @@ impl ConnectionHandler {
     pub fn destroy_bridge_values(&self) {
         debug!("Destroying bridge values, disconnected");
 
-        self.token_issuer.store(Arc::new(None));
         self.script_signer.store(Arc::new(None));
         self.roles.store(Arc::new(Vec::new()));
     }
@@ -498,53 +471,10 @@ impl ConnectionHandler {
         self.all_rooms.remove(&room_id);
     }
 
-    fn get_cached_user(&self, account_id: i32) -> Option<CachedUserData> {
-        match self.user_cache.get_mut(&account_id) {
-            Some(ent) => {
-                let mut entry = ent;
-                entry.accessed_at = Instant::now();
-                Some(entry.clone())
-            }
-
-            None => None,
-        }
-    }
-
-    pub fn add_user_data_cache(&self, data: SrvUserData) {
-        let now = Instant::now();
-
-        trace!("received user data ({data:?})");
-
-        let mut entry = self.user_cache.entry(data.account_id).or_insert_with(|| CachedUserData {
-            data: SrvUserData::default(),
-            accessed_at: now,
-        });
-
-        entry.data = data;
-        entry.accessed_at = now;
-    }
-
-    pub fn delete_from_user_data_cache(&self, account_id: i32) {
-        self.user_cache.remove(&account_id);
-    }
-
-    pub fn cleanup_user_data_cache(&self) {
-        let mut stale = HashSet::new();
-
-        for e in &mut self.user_cache.iter() {
-            let id = e.key();
-            let entry = e.value();
-
-            if entry.accessed_at.elapsed() > Duration::from_hours(3) {
-                stale.insert(*id);
-            }
-        }
-
-        // only remove entries if they are not present in the client store
-        for id in stale {
-            if !self.clients.has(id) {
-                self.user_cache.remove(&id);
-            }
+    pub fn update_user_data(&self, data: SrvUserData) {
+        if let Some(client) = self.clients.find(data.account_id) {
+            client.set_user_data(data);
+            self.push_display_data_refreshed_event(&client);
         }
     }
 
@@ -555,6 +485,7 @@ impl ConnectionHandler {
         client: &ClientStateHandle,
         account_id: i32,
         token: &str,
+        secret: u64,
         icons: PlayerIconData,
         settings: UserSettings,
         event_encoder: EventEncoder,
@@ -564,43 +495,51 @@ impl ConnectionHandler {
             return Ok(true);
         }
 
-        let issuer = self.token_issuer.load();
+        let result = self
+            .bridge
+            .send_user_login(account_id, token, secret)
+            .await
+            .map_err(|e| {
+                warn!("[{}] failed to process login via bridge: {}", client.address, e);
+                data::LoginFailedReason::CentralServerUnreachable
+            })
+            .transpose()
+            .unwrap_or(Err(data::LoginFailedReason::InvalidUserToken));
 
-        if let Some(issuer) = issuer.as_ref() {
-            let token_data = match issuer.validate_match(token, account_id) {
-                Ok(d) => d,
-                Err(_) => {
-                    self.on_login_failed(client, data::LoginFailedReason::InvalidUserToken).await?;
-                    return Ok(false);
-                }
-            };
-
-            self.on_login_success(client, token_data, icons, settings, event_encoder).await?;
-
-            Ok(true)
-        } else {
-            self.on_login_failed(client, data::LoginFailedReason::CentralServerUnreachable).await?;
-            Ok(false)
+        match result {
+            Ok(user_data) => {
+                self.on_login_success(client, user_data, icons, settings, event_encoder).await?;
+                Ok(true)
+            }
+            Err(reason) => {
+                self.on_login_failed(client, reason).await?;
+                Ok(false)
+            }
         }
     }
 
     async fn on_login_success(
         &self,
         client: &ClientStateHandle,
-        mut token_data: TokenData,
+        user_data: SrvUserData,
         icons: PlayerIconData,
         settings: UserSettings,
         event_encoder: EventEncoder,
     ) -> HandlerResult<()> {
         info!(
             cid = client.connection_id,
-            "[{}] {} ({}) logged in", client.address, token_data.username, token_data.account_id
+            "[{}] {} ({}) logged in", client.address, user_data.username, user_data.account_id
         );
+
+        if user_data.is_banned {
+            client.disconnect("user is banned");
+            return Ok(());
+        }
 
         self.total_connections.fetch_add(1, Ordering::Relaxed);
 
-        if let Some(old_client) = self.clients.insert(token_data.account_id, client) {
-            trace!("duplicate login detected for account ID {}", token_data.account_id);
+        if let Some(old_client) = self.clients.insert(user_data.account_id, client) {
+            trace!("duplicate login detected for account ID {}", user_data.account_id);
 
             // there already was a client with this account ID, disconnect them
             if let Some(session) = old_client.deauthorize() {
@@ -612,43 +551,7 @@ impl ConnectionHandler {
             ));
         }
 
-        // retrieve their roles
-        let roles = if let Some(roles_str) = token_data.roles_str.as_ref() {
-            let server_roles = self.roles.load();
-            let mut roles = heapless::Vec::new();
-
-            for role in roles_str.split(',').filter(|s| !s.is_empty()) {
-                if let Some(role) = server_roles.iter().find(|r| r.string_id == role) {
-                    let _ = roles.push(role.id);
-                } else {
-                    warn!(
-                        "[{} @ {}] unknown role '{}' found in token",
-                        token_data.account_id, client.address, role
-                    );
-                }
-            }
-
-            roles
-        } else {
-            heapless::Vec::new()
-        };
-
-        // free memory held by the role string and colors
-        let name_color = token_data.name_color.take();
-        token_data.roles_str = None;
-
-        let server_roles = self.roles.load();
-
-        // set roles and name color
-        if !roles.is_empty() || name_color.is_some() {
-            let moderator =
-                roles.iter().any(|r| server_roles.iter().any(|sr| sr.id == *r && sr.can_moderate));
-
-            client.set_special_data(roles, name_color);
-            client.set_moderator(moderator);
-        }
-
-        client.set_account_data(token_data);
+        client.set_user_data(user_data);
         client.set_icons(icons);
         client.set_settings(settings);
         client.set_event_encoder(event_encoder);
@@ -789,14 +692,17 @@ impl ConnectionHandler {
         icons: PlayerIconData,
     ) -> HandlerResult<()> {
         client.set_icons(icons);
+        self.push_display_data_refreshed_event(client);
 
+        Ok(())
+    }
+
+    fn push_display_data_refreshed_event(&self, client: &ClientStateHandle) {
         if let Some(session) = client.session() {
             let event = self
                 .to_owned_event(&DisplayDataRefreshedEvent { player: client.account_id() }, None);
             session.push_event_to_all(event);
         }
-
-        Ok(())
     }
 
     async fn handle_player_data(
@@ -906,8 +812,6 @@ impl ConnectionHandler {
         let is_mod = client.is_moderator();
         let platformer = session.platformer;
 
-        let mut color_buf = [0u8; 256];
-
         let buf = data::encode_message_heap!(self, to_allocate, msg => {
             let mut level_data = msg.reborrow().init_level_data();
             let mut players_data = level_data.reborrow().init_players(player_count as u32);
@@ -937,42 +841,8 @@ impl ConnectionHandler {
 
             let mut reqs_data = level_data.reborrow().init_display_datas(requests.len() as u32);
             for (i, req) in requests.iter().enumerate() {
-                let mut p = reqs_data.reborrow().get(i as u32);
-
-                if let Some(client) = self.find_client(*req) && let Some(adata) = client.account_data() {
-                    let settings = client.settings();
-                    // don't send if they wanna be hidden and we aren't a moderator
-                    if is_mod || !settings.hide_in_level {
-                        let icons = client.icons();
-                        p.set_account_id(adata.account_id);
-                        p.set_user_id(adata.user_id);
-                        p.set_username(adata.username.as_str());
-                        icons.encode(p.reborrow().init_icons());
-
-                        if let Some(sud) = client.special_data() && (is_mod || !settings.hide_roles) {
-                            let mut p = p.init_special_data();
-
-                            if let Err(e) = p.reborrow().set_roles(sud.roles.as_slice()) {
-                                warn!(
-                                    "[{}] failed to encode roles for player {}: {}",
-                                    client.address, adata.account_id, e
-                                );
-
-                                p.reborrow().init_roles(0);
-                            }
-
-                            if let Some(color) = sud.name_color.as_ref() {
-                                let mut writer = ByteWriter::new(&mut color_buf);
-                                color.encode(&mut writer);
-                                p.reborrow().set_name_color(writer.written());
-                            }
-
-                        }
-                    }
-                } else {
-                    debug!("Player data not found for account ID {}", req);
-                    p.set_account_id(0);
-                }
+                let p = reqs_data.reborrow().get(i as u32);
+                self.encode_player(*req, is_mod, p);
             }
 
             // encode events
@@ -992,6 +862,44 @@ impl ConnectionHandler {
         }
 
         Ok(())
+    }
+
+    fn encode_player(&self, id: i32, is_mod: bool, mut p: player_display_data::Builder) {
+        if let Some(client) = self.find_client(id)
+            && let Some(adata) = client.account_data()
+        {
+            let settings = client.settings();
+            // don't send if they wanna be hidden and we aren't a moderator
+            if is_mod || !settings.hide_in_level {
+                let icons = client.icons();
+                p.set_account_id(adata.account_id);
+                p.set_user_id(adata.user_id);
+                p.set_username(adata.username.as_str());
+                icons.encode(p.reborrow().init_icons());
+
+                if let Some(data) = &*client.user_data()
+                    && (is_mod || !settings.hide_roles)
+                    && (!data.role_ids.is_empty() || data.name_color.is_some())
+                {
+                    let mut p = p.init_special_data();
+
+                    if let Err(e) = p.reborrow().set_roles(data.role_ids.as_slice()) {
+                        warn!(
+                            "[{}] failed to encode roles for player {}: {}",
+                            client.address, adata.account_id, e
+                        );
+
+                        p.reborrow().init_roles(0);
+                    }
+
+                    if let Some(color) = data.name_color.as_ref() {
+                        p.reborrow().set_name_color(color.0.as_slice());
+                    }
+                }
+            }
+        } else {
+            debug!("Player data not found for account ID {id}");
+        }
     }
 
     async fn handle_player_update_meta(
@@ -1278,8 +1186,9 @@ impl ConnectionHandler {
     }
 
     fn check_can_talk(&self, client: &ClientStateHandle, is_voice: bool) -> HandlerResult<bool> {
-        let outcome = self
-            .get_cached_user(client.account_id())
+        let outcome = client
+            .user_data()
+            .as_ref()
             .map(|u| {
                 // 1. check rate limit
                 let able = if is_voice {
@@ -1292,17 +1201,13 @@ impl ConnectionHandler {
                     return CanTalkOutcome::RateLimited;
                 }
 
-                let allowed = if is_voice {
-                    u.data.can_use_voice
-                } else {
-                    u.data.can_use_quick_chat
-                };
+                let allowed = if is_voice { u.can_use_voice } else { u.can_use_quick_chat };
 
                 if allowed {
                     CanTalkOutcome::Allowed
-                } else if u.data.is_muted {
+                } else if u.is_muted {
                     CanTalkOutcome::Muted
-                } else if !u.data.is_linked {
+                } else if !u.is_linked {
                     CanTalkOutcome::NotLinked
                 } else {
                     // should never happen?

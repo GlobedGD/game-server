@@ -2,34 +2,28 @@ use std::{
     num::NonZero,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
     },
 };
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use server_shared::{
-    MultiColor, UserSettings,
-    data::PlayerIconData,
+    UserSettings, UsernameString,
+    data::{ClientAccountData, PlayerIconData, SrvUserData},
     events::{EventRateLimiter, EventRateLimiterOptions},
     qunet::transport::RateLimiter,
-    token_issuer::TokenData,
 };
 
 use crate::{events::EventEncoder, session_manager::GameSession};
 
-#[derive(Debug)]
-pub struct SpecialUserData {
-    pub roles: heapless::Vec<u8, 64>,
-    pub name_color: Option<MultiColor>,
-}
-
 pub struct ClientData {
-    account_data: OnceLock<TokenData>,
+    user_data: Mutex<Option<SrvUserData>>,
+    account_id: AtomicI32,
+    is_moderator: AtomicBool,
+
     session_id: AtomicU64,
     session: Mutex<Option<Arc<GameSession>>>,
     icons: Mutex<PlayerIconData>,
-    special_data: OnceLock<SpecialUserData>,
-    is_moderator: AtomicBool,
     deauthorized: AtomicBool,
     settings: Mutex<UserSettings>,
     last_voice_msg: Mutex<RateLimiter>,
@@ -40,34 +34,44 @@ pub struct ClientData {
 }
 
 impl ClientData {
-    pub fn account_data(&self) -> Option<&TokenData> {
+    pub fn user_data(&self) -> MutexGuard<'_, Option<SrvUserData>> {
+        self.user_data.lock()
+    }
+
+    pub fn set_user_data(&self, data: SrvUserData) {
+        self.account_id.store(data.account_id, Ordering::Relaxed);
+        self.is_moderator.store(data.is_moderator, Ordering::Relaxed);
+        *self.user_data.lock() = Some(data);
+    }
+
+    pub fn account_data(&self) -> Option<ClientAccountData> {
         if self.deauthorized.load(Ordering::Relaxed) {
             return None;
         }
 
-        self.account_data.get()
-    }
-
-    pub fn set_account_data(&self, data: TokenData) -> bool {
-        self.account_data.set(data).is_ok()
+        self.user_data().as_ref().map(|x| x.account_data())
     }
 
     pub fn authorized(&self) -> bool {
-        self.account_data().is_some()
+        !self.deauthorized.load(Ordering::Relaxed) && self.account_id() != 0
     }
 
     /// Returns the account ID if the client is authorized, otherwise returns 0.
     pub fn account_id(&self) -> i32 {
-        self.account_data().map(|x| x.account_id).unwrap_or(0)
+        if self.deauthorized.load(Ordering::Relaxed) {
+            0
+        } else {
+            self.account_id.load(Ordering::Relaxed)
+        }
     }
 
     pub fn account_id_nz(&self) -> Option<NonZero<i32>> {
-        self.account_data().and_then(|x| NonZero::new(x.account_id))
+        NonZero::new(self.account_id())
     }
 
-    /// Returns the account ID even if the client is unauthorized.
+    /// Returns the account ID regardless of if the client is authorized or not
     pub fn account_id_force(&self) -> i32 {
-        self.account_data.get().map(|x| x.account_id).unwrap_or(0)
+        self.account_id.load(Ordering::Relaxed)
     }
 
     /// Returns the account ID if the client is authorized, otherwise returns 0.
@@ -76,8 +80,8 @@ impl ClientData {
     }
 
     /// Returns the username if the client is authorized, otherwise returns an empty string.
-    pub fn username(&self) -> &str {
-        self.account_data().map_or("", |x| x.username.as_str())
+    pub fn username(&self) -> UsernameString {
+        self.account_data().map_or(UsernameString::new(), |x| x.username)
     }
 
     /// Deauthorizes the client, returning the current session if it exists.
@@ -124,20 +128,6 @@ impl ClientData {
         *self.settings.lock()
     }
 
-    pub fn set_special_data(&self, roles: heapless::Vec<u8, 64>, name_color: Option<MultiColor>) {
-        self.special_data
-            .set(SpecialUserData { roles, name_color })
-            .expect("attempting to set user roles twice");
-    }
-
-    pub fn special_data(&self) -> Option<&SpecialUserData> {
-        self.special_data.get()
-    }
-
-    pub fn set_moderator(&self, is_mod: bool) {
-        self.is_moderator.store(is_mod, Ordering::Relaxed);
-    }
-
     pub fn is_moderator(&self) -> bool {
         self.is_moderator.load(Ordering::Relaxed)
     }
@@ -172,11 +162,11 @@ const QUICK_CHAT_INTERVAL_NS: u64 = 2_000_000_000;
 impl Default for ClientData {
     fn default() -> Self {
         Self {
-            account_data: OnceLock::new(),
+            user_data: Mutex::default(),
+            account_id: AtomicI32::new(0),
             session_id: AtomicU64::new(0),
             session: Mutex::default(),
             icons: Mutex::default(),
-            special_data: OnceLock::new(),
             is_moderator: AtomicBool::new(false),
             deauthorized: AtomicBool::new(false),
             settings: Mutex::default(),

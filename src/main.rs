@@ -1,5 +1,10 @@
 #![feature(try_blocks)]
-#![allow(clippy::new_without_default, clippy::collapsible_if)]
+#![allow(
+    clippy::new_without_default,
+    clippy::collapsible_if,
+    // this is fine.
+    clippy::too_many_arguments
+)]
 
 use std::net::IpAddr;
 

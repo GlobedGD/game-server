@@ -120,13 +120,8 @@ impl EventHandler for BridgeHandler {
         };
 
         match msg {
-            SrvMessage::LoginOk {
-                token_key,
-                script_key,
-                token_expiry,
-                roles,
-            } => {
-                self.handle_login_ok(client, token_key, script_key, token_expiry, roles).await;
+            SrvMessage::LoginOk { script_key, roles } => {
+                self.handle_login_ok(client, script_key, roles).await;
             }
 
             SrvMessage::LoginFailed { reason } => {
@@ -150,6 +145,10 @@ impl EventHandler for BridgeHandler {
                 if let Some(user) = self.server().handler().find_client(id) {
                     user.disconnect("disconnected by central server");
                 }
+            }
+
+            SrvMessage::UserLoginResponse { request_id, data } => {
+                self.server().handler().bridge().on_user_login_response(request_id, data);
             }
 
             SrvMessage::ReloadConfig => {
@@ -268,23 +267,17 @@ impl BridgeHandler {
                 user.terminate();
             }
         } else {
-            handler.add_user_data_cache(data);
+            handler.update_user_data(data);
         }
     }
 
     async fn handle_login_ok(
         &self,
         client: &Client<Self>,
-        token_key: String,
         script_key: String,
-        token_expiry: u64, // seconds
         roles: Vec<SrvRole>,
     ) {
-        if let Err(e) = self.server().handler().init_bridge_things(
-            &token_key,
-            Duration::from_secs(token_expiry),
-            &script_key,
-        ) {
+        if let Err(e) = self.server().handler().init_bridge_things(&script_key) {
             error!("Failed to initialize token issuer: {e}");
             client.disconnect();
             return;
