@@ -233,7 +233,7 @@ impl AppHandler for ConnectionHandler {
                 };
                 let session = if msg.has_session() {
                     SessionId::from_reader(msg.get_session()?)
-                } else if legacy_   0 {
+                } else if legacy_session_id != 0 {
                     if editor_collab {
                         SessionId::from_legacy_ec(legacy_session_id)
                     } else {
@@ -634,6 +634,10 @@ impl ConnectionHandler {
         passcode: u32,
         platformer: bool,
     ) -> Result<(), data::JoinSessionFailedReason> {
+        if session.is_zero() {
+            return Err(data::JoinSessionFailedReason::InvalidSession);
+        }
+
         // ensure that the session is for a valid room
         let room_id = session.room_id;
         let owner;

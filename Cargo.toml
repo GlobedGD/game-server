@@ -12,7 +12,7 @@ codegen-units = 1
 heapless = "0.9.3"
 parking_lot = { version = "0.13.0", features = ["send_guard"] }
 rand = "0.10.3"
-server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "v8", features = [
+server-shared = { git = "https://github.com/GlobedGD/server-shared", rev = "v10", features = [
     "game",
     "srvc",
     "qunet-client",
