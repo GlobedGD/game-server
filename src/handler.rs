@@ -221,7 +221,7 @@ impl AppHandler for ConnectionHandler {
                 let token = msg.get_token()?.to_str()?;
                 let secret = msg.get_secret();
                 let icons = PlayerIconData::from_reader(msg.get_icons()?)?;
-                let session_id = msg.get_session_id();
+                let legacy_session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
                 let platformer = msg.get_platformer();
                 let settings = UserSettings::from_reader(msg.get_settings()?);
@@ -231,6 +231,17 @@ impl AppHandler for ConnectionHandler {
                 } else {
                     None
                 };
+                let session = if msg.has_session() {
+                    SessionId::from_reader(msg.get_session()?)
+                } else if legacy_   0 {
+                    if editor_collab {
+                        SessionId::from_legacy_ec(legacy_session_id)
+                    } else {
+                        SessionId::from_legacy(legacy_session_id)
+                    }
+                } else {
+                    SessionId::default()
+                };
 
                 try {
                     let event_encoder = self.create_event_encoder(event_dict)?;
@@ -238,21 +249,33 @@ impl AppHandler for ConnectionHandler {
                     if self.handle_login_attempt(client, account_id, token, secret, icons, settings, event_encoder).await? {
                         unpacked_data.reset(); // free up memory
 
-                        if session_id != 0 {
-                            self.handle_join_session(client, session_id, passcode, platformer, editor_collab).await?;
+                        if !session.is_zero() {
+                            self.handle_join_session(client, session, passcode, platformer).await?;
                         }
                     }
                 }
             },
 
             JoinSession(msg) => {
-                let session_id = msg.get_session_id();
+                let legacy_session_id = msg.get_session_id();
                 let passcode = msg.get_passcode();
                 let platformer = msg.get_platformer();
                 let editor_collab = msg.get_editor_collab();
 
+                let session = if msg.has_session() {
+                    SessionId::from_reader(msg.get_session()?)
+                } else if legacy_session_id != 0 {
+                    if editor_collab {
+                        SessionId::from_legacy_ec(legacy_session_id)
+                    } else {
+                        SessionId::from_legacy(legacy_session_id)
+                    }
+                } else {
+                    SessionId::default()
+                };
+
                 unpacked_data.reset(); // free up memory
-                self.handle_join_session(client, session_id, passcode, platformer, editor_collab).await
+                self.handle_join_session(client, session, passcode, platformer).await
             },
 
             LeaveSession(_msg) => {
@@ -584,20 +607,15 @@ impl ConnectionHandler {
     async fn handle_join_session(
         &self,
         client: &ClientStateHandle,
-        session_id: u64,
+        session: SessionId,
         passcode: u32,
         platformer: bool,
-        editor_collab: bool,
     ) -> HandlerResult<()> {
         must_auth(client)?;
 
-        debug!(id = session_id, passcode, platformer, "[{}] joining session", client.address);
+        debug!(%session, passcode, platformer, "[{}] joining session", client.address);
 
-        let session_id = SessionId::from(session_id);
-
-        if let Err(e) =
-            self.do_join_session(client, session_id, passcode, platformer, editor_collab)
-        {
+        if let Err(e) = self.do_join_session(client, session, passcode, platformer) {
             let buf = data::encode_message!(self, 48, msg => {
                 let mut join_failed = msg.reborrow().init_join_session_failed();
                 join_failed.set_reason(e);
@@ -615,39 +633,33 @@ impl ConnectionHandler {
         session: SessionId,
         passcode: u32,
         platformer: bool,
-        editor_collab: bool,
     ) -> Result<(), data::JoinSessionFailedReason> {
-        let new_session = if editor_collab {
-            self.session_manager.get_or_create_session(session.as_u64(), 0, platformer, true)
-        } else {
-            // ensure that the session is for a valid room
-            let room_id = session.room_id();
-            let owner;
+        // ensure that the session is for a valid room
+        let room_id = session.room_id;
+        let owner;
 
-            if room_id != 0 {
-                if let Some(room) = self.all_rooms.get(&room_id) {
-                    if room.passcode != 0 && room.passcode != passcode {
-                        warn!("incorrect passcode, expected {}, got {}", room.passcode, passcode);
-                        return Err(data::JoinSessionFailedReason::InvalidPasscode);
-                    }
-
-                    owner = room.owner;
-                } else {
-                    warn!(
-                        "[{} @ {}] no room found for session {} (room id {})",
-                        client.account_id(),
-                        client.address,
-                        session.as_u64(),
-                        room_id
-                    );
-                    return Err(data::JoinSessionFailedReason::InvalidRoom);
+        if room_id != 0 {
+            if let Some(room) = self.all_rooms.get(&room_id) {
+                if room.passcode != 0 && room.passcode != passcode {
+                    warn!("incorrect passcode, expected {}, got {}", room.passcode, passcode);
+                    return Err(data::JoinSessionFailedReason::InvalidPasscode);
                 }
-            } else {
-                owner = 0;
-            }
 
-            self.session_manager.get_or_create_session(session.as_u64(), owner, platformer, false)
-        };
+                owner = room.owner;
+            } else {
+                warn!(
+                    "[{} @ {}] no room found for session {}",
+                    client.account_id(),
+                    client.address,
+                    session,
+                );
+                return Err(data::JoinSessionFailedReason::InvalidRoom);
+            }
+        } else {
+            owner = 0;
+        }
+
+        let new_session = self.session_manager.get_or_create_session(session, owner, platformer);
 
         if let Some(old_session) = client.set_session(new_session.clone()) {
             self.remove_from_session(client, &old_session);
@@ -678,7 +690,7 @@ impl ConnectionHandler {
     fn remove_from_session(&self, client: &ClientStateHandle, session: &GameSession) {
         let account_id = client.account_id_force();
         session.remove_player(account_id);
-        self.session_manager.delete_session_if_empty(session.id, session.editor_collab);
+        self.session_manager.delete_session_if_empty(session.id);
 
         #[cfg(feature = "scripting")]
         if let Some(sm) = session.scripting() {

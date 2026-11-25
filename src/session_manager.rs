@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
+use server_shared::SessionId;
 use server_shared::events::{EventOptions, OwnedEvent};
 use server_shared::qunet::server::{ServerHandle, WeakServerHandle};
 use smallvec::SmallVec;
@@ -33,8 +34,7 @@ use {
 };
 
 pub struct SessionManager {
-    sessions: DashMap<u64, Arc<GameSession>>,
-    ec_sessions: DashMap<u64, Arc<GameSession>>,
+    sessions: DashMap<SessionId, Arc<GameSession>>,
     server: OnceLock<WeakServerHandle<ConnectionHandler>>,
 }
 
@@ -42,7 +42,6 @@ impl SessionManager {
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
-            ec_sessions: DashMap::new(),
             server: OnceLock::new(),
         }
     }
@@ -57,23 +56,19 @@ impl SessionManager {
 
     pub fn get_or_create_session(
         self: &Arc<SessionManager>,
-        session_id: u64,
+        session_id: SessionId,
         owner: i32,
         platformer: bool,
-        editor_collab: bool,
     ) -> Arc<GameSession> {
-        let map = if editor_collab { &self.ec_sessions } else { &self.sessions };
-
-        map.entry(session_id)
-            .or_insert_with(|| GameSession::new(session_id, owner, platformer, editor_collab, self))
+        self.sessions
+            .entry(session_id)
+            .or_insert_with(|| GameSession::new(session_id, owner, platformer, self))
             .clone()
     }
 
-    pub fn delete_session_if_empty(&self, session_id: u64, editor_collab: bool) {
-        let map = if editor_collab { &self.ec_sessions } else { &self.sessions };
-
+    pub fn delete_session_if_empty(&self, session_id: SessionId) {
         if let Some((_, session)) =
-            map.remove_if(&session_id, |_, session| session.players.is_empty())
+            self.sessions.remove_if(&session_id, |_, session| session.players.is_empty())
         {
             #[cfg(feature = "scripting")]
             if let Some(scripting) = session.scripting() {
@@ -85,7 +80,7 @@ impl SessionManager {
     }
 
     pub fn count(&self) -> usize {
-        self.sessions.len() + self.ec_sessions.len()
+        self.sessions.len()
     }
 }
 
@@ -166,10 +161,9 @@ impl GamePlayerState {
 }
 
 pub struct GameSession {
-    pub id: u64,
+    pub id: SessionId,
     pub owner: i32,
     pub platformer: bool,
-    pub editor_collab: bool,
 
     players: DashMap<i32, GamePlayerState, BuildNoHashHasher<i32>>,
     player_ids: Mutex<FxHashSet<i32>>,
@@ -187,17 +181,15 @@ pub struct GameSession {
 
 impl GameSession {
     fn new(
-        id: u64,
+        id: SessionId,
         owner: i32,
         platformer: bool,
-        editor_collab: bool,
         manager: &Arc<SessionManager>,
     ) -> Arc<Self> {
         Arc::new(Self {
             id,
             owner,
             platformer,
-            editor_collab,
             players: DashMap::default(),
             player_ids: Mutex::new(FxHashSet::default()),
             triggers: OnceLock::new(),
@@ -368,7 +360,7 @@ impl GameSession {
     }
 
     pub fn push_event(&self, player_id: i32, event: OwnedEvent) {
-        trace!(sid = self.id, "pushed event {} to {player_id}", event.id);
+        trace!(session = %self.id, "pushed event {} to {player_id}", event.id);
 
         if let Some(mut player) = self.players.get_mut(&player_id) {
             player.push_event(event);
@@ -376,7 +368,7 @@ impl GameSession {
     }
 
     pub fn push_event_to_all(&self, event: OwnedEvent) {
-        trace!(sid = self.id, "pushed event {} to all", event.id);
+        trace!(session = %self.id, "pushed event {} to all", event.id);
 
         iter_dashmap_mut(&self.players, |p| {
             p.1.push_event(event.clone());
@@ -384,7 +376,7 @@ impl GameSession {
     }
 
     pub fn push_event_to_all_except(&self, event: OwnedEvent, except: i32) {
-        trace!(sid = self.id, "pushed event {} to all except {except}", event.id);
+        trace!(session = %self.id, "pushed event {} to all except {except}", event.id);
 
         iter_dashmap_mut(&self.players, |p| {
             if p.0 != &except {
@@ -434,6 +426,6 @@ impl Eq for GameSession {}
 
 impl Hash for GameSession {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.id);
+        self.id.hash(state)
     }
 }

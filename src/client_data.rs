@@ -2,7 +2,7 @@ use std::{
     num::NonZero,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI32, Ordering},
     },
 };
 
@@ -21,7 +21,6 @@ pub struct ClientData {
     account_id: AtomicI32,
     is_moderator: AtomicBool,
 
-    session_id: AtomicU64,
     session: Mutex<Option<Arc<GameSession>>>,
     icons: Mutex<PlayerIconData>,
     deauthorized: AtomicBool,
@@ -90,20 +89,14 @@ impl ClientData {
         self.take_session()
     }
 
-    pub fn session_id(&self) -> u64 {
-        self.session_id.load(Ordering::Relaxed)
-    }
-
     /// Sets the session for this client, returning the previous session if it existed.
     pub fn set_session(&self, session: Arc<GameSession>) -> Option<Arc<GameSession>> {
-        self.session_id.store(session.id, Ordering::Relaxed);
         let mut old = self.session.lock();
         old.replace(session)
     }
 
     /// Clears the session for this client, returning the previous session if it existed.
     pub fn take_session(&self) -> Option<Arc<GameSession>> {
-        self.session_id.store(0, Ordering::Relaxed);
         let mut old = self.session.lock();
         old.take()
     }
@@ -164,7 +157,6 @@ impl Default for ClientData {
         Self {
             user_data: Mutex::default(),
             account_id: AtomicI32::new(0),
-            session_id: AtomicU64::new(0),
             session: Mutex::default(),
             icons: Mutex::default(),
             is_moderator: AtomicBool::new(false),
